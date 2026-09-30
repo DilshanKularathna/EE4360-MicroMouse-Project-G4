@@ -7,8 +7,8 @@ const int LEFT_ENC_B = 3; // Interrupt 1
 
 // Pin Definitions for Right Driver & Encoder
 const int RIGHT_EN = 7;
-const int RIGHT_RPWM = 8;
-const int RIGHT_LPWM = 9;
+const int RIGHT_RPWM = 9; //chnaged in the code as wheels rotate oposite
+const int RIGHT_LPWM = 8;
 const int RIGHT_ENC_A = 18; // Interrupt 5
 const int RIGHT_ENC_B = 19; // Interrupt 4
 
