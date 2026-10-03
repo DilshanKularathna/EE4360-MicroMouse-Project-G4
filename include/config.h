@@ -23,4 +23,8 @@ const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
 // Default Thresholds (Updated via calibration utility)
 const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
 
+// --- Ultrasonic Sensor Pins ---
+#define PIN_ULTRA_TRIG       12
+#define PIN_ULTRA_ECHO       13
+
 #endif // CONFIG_H
