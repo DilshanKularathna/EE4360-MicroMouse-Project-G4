@@ -3,28 +3,24 @@
 
 #include <Arduino.h>
 
-// --- Motor Driver Pins (IBT-2 / BTS7960 Style Drivers) ---
-// Enable pins (Both Left and Right drivers enabled via Pin 7)
+// --- Motor Driver Pins ---
 #define PIN_MOTOR_EN         7
-
-// Left Motor Driver Pins
 #define PIN_LEFT_RPWM        4
 #define PIN_LEFT_LPWM        6
-
-// Right Motor Driver Pins
 #define PIN_RIGHT_RPWM       9
 #define PIN_RIGHT_LPWM       8
 
-// --- Encoder Pins (Arduino Mega 2560 Hardware Interrupts) ---
-#define PIN_LEFT_ENC_A       2  // Hardware Interrupt 0
-#define PIN_LEFT_ENC_B       3  // Hardware Interrupt 1
-#define PIN_RIGHT_ENC_A      18 // Hardware Interrupt 5
-#define PIN_RIGHT_ENC_B      19 // Hardware Interrupt 4
+#define PIN_LEFT_ENC_A       2
+#define PIN_LEFT_ENC_B       3
+#define PIN_RIGHT_ENC_A      18
+#define PIN_RIGHT_ENC_B      19
 
-// --- Movement & Calibration Constants ---
-#define BASE_PWM             70
-#define TICKS_PER_CELL_25CM  288.0f // 288 ticks = 25 cm cell
-#define TICKS_PER_90_DEG     116.5f // ~116-117 ticks for 90° pivot turn
-#define TICKS_PER_180_DEG    232.5f // ~232-233 ticks for 180° U-turn
+// --- IR Sensor Array Pins ---
+#define PIN_IR_EN            49
+const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
+#define NUM_IR_SENSORS       8
+
+// Default Thresholds (Updated via calibration utility)
+const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
 
 #endif // CONFIG_H
