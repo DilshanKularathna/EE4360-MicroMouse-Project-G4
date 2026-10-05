@@ -28,11 +28,17 @@ const int WHITE_VALUES[8] = {288, 158, 195, 324, 382, 516, 492, 460};
 const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
 
 // Default PID Parameters
-#define DEFAULT_BASE_PWM    30
+#define DEFAULT_BASE_PWM    100
 #define DEFAULT_MAX_PWM     120
 #define DEFAULT_KP          0.030f
 #define DEFAULT_KI          0.000f
 #define DEFAULT_KD          0.100f
+
+// Calibrated Calibration Values
+// 288 ticks = 25 cm (1 cell) -> 11.52 ticks/cm
+const float TICKS_PER_CELL_25CM = 288.0;
+const float TICKS_PER_90_DEG = 116.5;  // Average of 116-117 ticks
+const float TICKS_PER_180_DEG = 232.5; // Average of 232-233 ticks
 
 // --- Ultrasonic Sensor Pins ---
 #define PIN_ULTRA_TRIG       12
