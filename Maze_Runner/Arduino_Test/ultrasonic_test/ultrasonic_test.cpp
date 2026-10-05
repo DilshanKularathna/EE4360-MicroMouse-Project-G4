@@ -1,3 +1,4 @@
+#include <Arduino.h>
 // Define the pins connected to the sensor on the Mega 2560
 const int trigPin = 12;
 const int echoPin = 13;
