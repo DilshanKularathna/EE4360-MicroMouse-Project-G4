@@ -1,4 +1,4 @@
-#include "Ultrasonics.h"
+#include "Ultrasonic.h"
 
 Ultrasonics::Ultrasonics(uint8_t trig, uint8_t echo)
     : trigPin(trig), echoPin(echo) {}
