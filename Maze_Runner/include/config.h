@@ -44,4 +44,12 @@ const float TICKS_PER_180_DEG = 232.5; // Average of 232-233 ticks
 #define PIN_ULTRA_TRIG       12
 #define PIN_ULTRA_ECHO       13
 
+// --- Battery Monitoring & Safety Settings ---
+#define PIN_BATTERY_ADC       A7       // The analog pin connected to your voltage divider
+#define BATTERY_V_MAX         12.6f    // Full charge voltage (e.g., 12.6V for 3S, 16.8V for 4S)
+#define BATTERY_CRITICAL_LOW  9.9f     // Cutoff voltage to protect cells (e.g., 3.3V per cell minimum)
+#define BATTERY_R1            10000.0f // Top resistor in Ohms (10k)
+#define BATTERY_R2            4700.0f  // Bottom resistor in Ohms (4.7k)
+#define ARDUINO_V_REF         5.0f     // Regulated 5V supplying your Arduino from the buck
+
 #endif // CONFIG_H
