@@ -3,15 +3,15 @@
 
 #include <Arduino.h>
 
-extern volatile long leftEncoderCount  = 0; // LeftEncodeISR() in MotorDriver.cpp
-extern volatile long rightEncoderCount = 0;
+extern volatile long leftEncoderCount;
+extern volatile long rightEncoderCount;
 
-extern float frontDistance = 0;
-extern float leftDistance  = 0;
-extern float rightDistance = 0;
-extern bool isMovingForward   = false; // MovedistanceCM() in MotorDriver.cpp
-extern bool  isTurning     = false;
-extern float lastError        = 0.0f;
-extern float integralError    = 0.0f;
+extern float frontDistance;
+extern float leftDistance;
+extern float rightDistance;
+extern bool isMovingForward; // MovedistanceCM() in MotorDriver.cpp
+extern bool isTurning;
+extern float lastError;
+extern float integralError;
 
 #endif

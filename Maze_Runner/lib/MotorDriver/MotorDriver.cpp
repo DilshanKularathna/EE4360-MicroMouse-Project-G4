@@ -8,6 +8,13 @@
 // // Global pulse counters required for ISR access
 volatile long leftEncoderCount  = 0;
 volatile long rightEncoderCount = 0;
+float frontDistance = 0.0f;
+float leftDistance = 0.0f;
+float rightDistance = 0.0f;
+bool isMovingForward = false;
+bool isTurning = false;
+float lastError = 0.0f;
+float integralError = 0.0f;
 int currentHeading = NORTH;
 
 // ================================================================
@@ -39,15 +46,17 @@ void turnAround() {
 void turnDegrees(float degrees) { // + value turns right, - value turns left
     resetEncoders();
 
-    float wheelCircumference = 3.14159f * WHEEL_DIAMETER_CM;
-    float distancePerWheel   = (3.14159f * WHEELBASE_CM * fabs(degrees)) / 360.0f;
-
-    long targetCounts =
-        (long)(0.5f * ((distancePerWheel / wheelCircumference) * ENCODER_COUNTS_PER_REV));
-
-    if (fabs(degrees) > 170.0f) {
-        targetCounts = (long)(targetCounts * 1.03f);
+    const float turnMagnitude = fabs(degrees);
+    const float turnRatio = turnMagnitude / 90.0f;
+    float targetCountsFloat;
+    if (turnRatio <= 1.0f) {
+        targetCountsFloat = TICKS_PER_90_DEG * turnRatio;
+    } else {
+        // Interpolate between the measured 90-degree and 180-degree values.
+        targetCountsFloat = TICKS_PER_90_DEG +
+            (TICKS_PER_180_DEG - TICKS_PER_90_DEG) * (turnRatio - 1.0f);
     }
+    const long targetCounts = (long)(targetCountsFloat + 0.5f);
 
     long lCount = 0;
     long rCount = 0;

@@ -1,8 +1,10 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <util/atomic.h>
 #include "config.h"
 #include "Ultrasonic.h"
 #include "motorDriver.h"
+#include "globals.h"
 
 // ================================================================
 // CONSTANTS
@@ -10,10 +12,33 @@
 const long TARGET_TICKS_FWD = 288;
 
 bool          started = false;
+bool          turnFault = false;
 unsigned long t0      = 0;
 
 #define TURN_SPEED 25
 const float MAX_DUTY = 28.0f;
+const float WALL_STEER_GAIN = 1.5f;
+const float MAX_WALL_STEER_DUTY = 8.0f;
+const float WALL_ERROR_DEADBAND_CM = 0.5f;
+const float GYRO_HEADING_GAIN = 0.8f;
+const float MAX_GYRO_STEER_DUTY = 6.0f;
+const float MAX_COMBINED_STEER_DUTY = 10.0f;
+const float GYRO_HEADING_DEADBAND_DEG = 1.0f;
+
+// MPU6050 is mounted with +Z down, so Z gyro rate is positive for a
+// clockwise (right) turn. Calibrate the stationary bias at every boot.
+const uint8_t MPU6050_ADDRESS = 0x68;
+const uint8_t MPU6050_REG_PWR_MGMT_1 = 0x6B;
+const uint8_t MPU6050_REG_GYRO_CONFIG = 0x1B;
+const uint8_t MPU6050_REG_ACCEL_XOUT_H = 0x3B;
+const float MPU6050_GYRO_LSB_PER_DPS = 131.0f;
+const unsigned long GYRO_SAMPLE_INTERVAL_US = 10000UL;
+const unsigned long GYRO_BIAS_CALIBRATION_MS = 3000UL;
+const float TURN_STOP_TOLERANCE_DEG = 4.0f;
+int16_t gyroOffsets[3] = {0, 0, 0};
+bool gyroReady = false;
+float gyroHeadingDeg = 0.0f;
+float gyroHeadingTargetDeg = 0.0f;
 
 // ================================================================
 // GLOBAL VARIABLES
@@ -22,8 +47,8 @@ float eprevL = 0, eintegralL = 0;
 float eprevR = 0, eintegralR = 0;
 long  prevT = 0;
 
-const float kpL = 4.5f, kdL = 0.0f, kiL = 0.0f;
-const float kpR = 4.0f, kdR = 0.0f, kiR = 0.0f;
+const float kpL = 2.5f, kdL = 0.0f, kiL = 0.0f;
+const float kpR = 2.5f, kdR = 0.0f, kiR = 0.0f;
 
 float frontDist, leftDist, rightDist;
 
@@ -31,6 +56,9 @@ enum RelativeDir { REL_LEFT = -1, REL_FRONT = 0, REL_RIGHT = 1, REL_DEAD = 99 };
 
 void moveForwardPID();
 void  navigateStep();
+bool initializeGyroscope();
+bool readGyro(int16_t gyroRaw[3]);
+bool turnWithGyroscope(float targetDegrees);
 
 RelativeDir findNextUnvisitedNeighbor() {
     bool leftWall  = isWallOnLeft();
@@ -57,6 +85,10 @@ RelativeDir findNextUnvisitedNeighbor() {
 }
 
 void navigateStep() {
+    if (turnFault) {
+        stopMotors();
+        return;
+    }
     readAllSensors();
 
 // --- ADD THIS SERIAL PRINT BLOCK HERE ---
@@ -75,26 +107,142 @@ void navigateStep() {
 
     if (nextDir == REL_DEAD) {
         Serial.println("Dead end -> turn around");
-        turnAround();
+        if (!turnWithGyroscope(180.0f)) turnFault = true;
         return;
     }
 
     if (nextDir == REL_LEFT) {
         Serial.println("Turning left");
-        turnLeft();
+        if (!turnWithGyroscope(-90.0f)) {
+            turnFault = true;
+            return;
+        }
         moveForwardPID();
         return;
     }
 
     if (nextDir == REL_RIGHT) {
         Serial.println("Turning right");
-        turnRight();
+        if (!turnWithGyroscope(90.0f)) {
+            turnFault = true;
+            return;
+        }
         moveForwardPID();
         return;
     }
 
     Serial.println("Moving forward");
     moveForwardPID();
+}
+
+bool readGyro(int16_t gyroRaw[3]) {
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(MPU6050_REG_ACCEL_XOUT_H + 8); // GYRO_XOUT_H
+    if (Wire.endTransmission(false) != 0 || Wire.requestFrom(MPU6050_ADDRESS, (uint8_t)6) != 6) {
+        while (Wire.available()) Wire.read();
+        return false;
+    }
+    for (uint8_t axis = 0; axis < 3; ++axis) {
+        gyroRaw[axis] = (int16_t)((Wire.read() << 8) | Wire.read());
+    }
+    return true;
+}
+
+bool initializeGyroscope() {
+    Wire.begin();
+    Wire.setClock(100000);
+
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(MPU6050_REG_PWR_MGMT_1);
+    Wire.write(0x00); // Wake the MPU6050 and use the internal clock.
+    if (Wire.endTransmission() != 0) return false;
+    delay(100);
+
+    Wire.beginTransmission(MPU6050_ADDRESS);
+    Wire.write(MPU6050_REG_GYRO_CONFIG);
+    Wire.write(0x00); // +/-250 degrees/second, 131 LSB per degree/second.
+    if (Wire.endTransmission() != 0) return false;
+
+    int32_t sums[3] = {0, 0, 0};
+    uint16_t samples = 0;
+    int16_t raw[3];
+    const unsigned long startMs = millis();
+    unsigned long nextSampleUs = micros();
+    Serial.println(F("Keep robot still: calibrating gyro bias for 3 seconds."));
+    while (millis() - startMs < GYRO_BIAS_CALIBRATION_MS) {
+        if ((long)(micros() - nextSampleUs) >= 0) {
+            if (!readGyro(raw)) return false;
+            for (uint8_t axis = 0; axis < 3; ++axis) sums[axis] += raw[axis];
+            ++samples;
+            nextSampleUs += GYRO_SAMPLE_INTERVAL_US;
+        }
+    }
+    if (samples == 0) return false;
+    for (uint8_t axis = 0; axis < 3; ++axis) gyroOffsets[axis] = (int16_t)(sums[axis] / samples);
+    Serial.print(F("Gyro bias raw X/Y/Z: "));
+    Serial.print(gyroOffsets[0]); Serial.print('/');
+    Serial.print(gyroOffsets[1]); Serial.print('/');
+    Serial.println(gyroOffsets[2]);
+    return true;
+}
+
+bool turnWithGyroscope(float targetDegrees) {
+    if (!gyroReady) {
+        stopMotors();
+        Serial.println(F("Turn refused: MPU6050 is not ready."));
+        return false;
+    }
+
+    const uint8_t yawAxis = MPU6050_YAW_AXIS_INDEX;
+    const unsigned long timeoutMs = (fabs(targetDegrees) > 90.0f) ? 4500UL : 3000UL;
+    const unsigned long startMs = millis();
+    unsigned long nextSampleUs = micros();
+    unsigned long lastSampleUs = nextSampleUs;
+    float angle = 0.0f;
+    int motorYawSign = 1;
+    bool motorDirectionVerified = false;
+    int16_t raw[3];
+
+    Serial.print(F("Gyro turn target: ")); Serial.print(targetDegrees, 0); Serial.println(F(" deg"));
+    while (fabs(targetDegrees - angle) > TURN_STOP_TOLERANCE_DEG && millis() - startMs < timeoutMs) {
+        if ((long)(micros() - nextSampleUs) < 0) continue;
+        if (!readGyro(raw)) {
+            stopMotors();
+            Serial.println(F("MPU6050 read failed during turn; motors stopped."));
+            return false;
+        }
+
+        const unsigned long sampleUs = micros();
+        const float dt = (sampleUs - lastSampleUs) / 1000000.0f;
+        lastSampleUs = sampleUs;
+        const float rateDps = (raw[yawAxis] - gyroOffsets[yawAxis]) / MPU6050_GYRO_LSB_PER_DPS;
+        angle += rateDps * dt;
+        gyroHeadingDeg += rateDps * dt;
+
+        if (!motorDirectionVerified && millis() - startMs >= 200UL && fabs(angle) >= 2.0f) {
+            motorYawSign = (angle * targetDegrees > 0.0f) ? 1 : -1;
+            motorDirectionVerified = true;
+        }
+
+        const float error = targetDegrees - angle;
+        const int direction = ((error > 0.0f) ? 1 : -1) * motorYawSign;
+        const int duty = (fabs(error) < 20.0f) ? 18 : TURN_SPEED;
+        setMotors(direction * duty, -direction * duty);
+        nextSampleUs += GYRO_SAMPLE_INTERVAL_US;
+    }
+
+    stopMotors();
+    delay(200); // Let the robot settle before reporting the final integrated angle.
+    if (!readGyro(raw)) {
+        Serial.println(F("MPU6050 read failed after turn."));
+        return false;
+    }
+    const bool reached = fabs(targetDegrees - angle) <= TURN_STOP_TOLERANCE_DEG;
+    if (reached) gyroHeadingTargetDeg += targetDegrees;
+    Serial.print(F("Turn angle=")); Serial.print(angle, 1);
+    Serial.print(F(" deg; target=")); Serial.print(targetDegrees, 0);
+    Serial.println(reached ? F("; reached") : F("; timeout/under-turn"));
+    return reached;
 }
 
 void moveForwardPID() {
@@ -112,7 +260,12 @@ void moveForwardPID() {
     bool          reached            = false;
     unsigned long startTime          = millis();
     unsigned long lastCheck          = 0;
+    unsigned long nextGyroSampleUs   = micros();
+    unsigned long lastGyroSampleUs   = nextGyroSampleUs;
+    float ultrasonicSteering         = 0.0f;
+    float gyroSteering               = 0.0f;
     float         steeringAdjustment = 0;
+    int16_t gyroRaw[3];
 
     while (!reached) {
         if (millis() - startTime > 4000)
@@ -130,26 +283,56 @@ void moveForwardPID() {
             float r = readUltrasonic(PIN_ULTRA_RIGHT_TRIG, PIN_ULTRA_RIGHT_ECHO);
             float l = readUltrasonic(PIN_ULTRA_LEFT_TRIG, PIN_ULTRA_LEFT_ECHO);
 
-            steeringAdjustment = 0;
-
-            if (r > 0.1f && l > 0.1f) {
-                if (r < CENTER_DIST) {
-                    steeringAdjustment = 5.0f;
-                } else if (l < CENTER_DIST) {
-                    steeringAdjustment = -5.0f;
-                }
-            } else if (r > 0.1f && l <= 0.1f) {
-                if (r > 4.0f) {
-                    steeringAdjustment = 5.0f;
-                }
-            } else if (l > 0.1f && r <= 0.1f) {
-                if (l > 4.0f) {
-                    steeringAdjustment = -5.0f;
-                }
+            const bool rightWallSeen = r > 0.1f && r <= WALL_THRESHOLD;
+            const bool leftWallSeen  = l > 0.1f && l <= WALL_THRESHOLD;
+            float wallError = 0.0f;
+            if (leftWallSeen && rightWallSeen) {
+                // Positive error means closer to the right wall: steer left.
+                wallError = l - r;
+            } else if (rightWallSeen) {
+                wallError = CENTER_DIST - r;
+            } else if (leftWallSeen) {
+                wallError = l - CENTER_DIST;
             }
+            if (fabs(wallError) < WALL_ERROR_DEADBAND_CM) wallError = 0.0f;
+            ultrasonicSteering = constrain(
+                wallError * WALL_STEER_GAIN,
+                -MAX_WALL_STEER_DUTY,
+                MAX_WALL_STEER_DUTY);
 
             lastCheck = millis();
         }
+
+        // Keep a persistent yaw reference across consecutive cells, correcting
+        // accumulated drift from both long straight runs and slightly imperfect turns.
+        if ((long)(micros() - nextGyroSampleUs) >= 0) {
+            if (!readGyro(gyroRaw)) {
+                stopMotors();
+                turnFault = true;
+                Serial.println(F("MPU6050 read failed during forward move; motors stopped."));
+                return;
+            }
+            const unsigned long sampleUs = micros();
+            const float gyroDt = (sampleUs - lastGyroSampleUs) / 1000000.0f;
+            lastGyroSampleUs = sampleUs;
+            const uint8_t yawAxis = MPU6050_YAW_AXIS_INDEX;
+            const float yawRateDps = (gyroRaw[yawAxis] - gyroOffsets[yawAxis]) / MPU6050_GYRO_LSB_PER_DPS;
+            gyroHeadingDeg += yawRateDps * gyroDt;
+
+            // Positive clockwise heading error requires a counter-clockwise
+            // wheel bias; ultrasonic correction is added below.
+            float headingError = gyroHeadingDeg - gyroHeadingTargetDeg;
+            if (fabs(headingError) < GYRO_HEADING_DEADBAND_DEG) headingError = 0.0f;
+            gyroSteering = constrain(
+                headingError * GYRO_HEADING_GAIN,
+                -MAX_GYRO_STEER_DUTY,
+                MAX_GYRO_STEER_DUTY);
+            nextGyroSampleUs += GYRO_SAMPLE_INTERVAL_US;
+        }
+        steeringAdjustment = constrain(
+            ultrasonicSteering + gyroSteering,
+            -MAX_COMBINED_STEER_DUTY,
+            MAX_COMBINED_STEER_DUTY);
 
         long  currT  = micros();
         float deltaT = (currT - prevT) / 1e6f;
@@ -234,17 +417,23 @@ void setup() {
     pinMode(PIN_ULTRA_RIGHT_ECHO, INPUT);
 
     prevT = micros();
-    t0    = millis();
+
+    gyroReady = initializeGyroscope();
+    t0 = millis();
+    if (!gyroReady) {
+        stopMotors();
+        Serial.println(F("MPU6050 not detected or calibration read failed. Auto drive disabled."));
+    }
 
     Serial.println("========================================");
     Serial.println("WALL FOLLOWER - READY");
-    Serial.println("Auto start in 3 seconds...");
+    Serial.println(gyroReady ? F("Gyro yaw correction enabled. Auto start in 3 seconds...") : F("Auto start disabled until MPU6050 works."));
     Serial.println("Priority: Left -> Right -> Front");
     Serial.println("========================================");
 }
 
 void loop() {
-    if (!started && millis() - t0 >= 3000) {
+    if (gyroReady && !started && millis() - t0 >= 3000) {
         started = true;
         Serial.println("\n=== STARTING AUTO DRIVE ===");
     }

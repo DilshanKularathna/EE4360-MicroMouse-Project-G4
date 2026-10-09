@@ -37,8 +37,11 @@ const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
 // Calibrated Calibration Values
 // 288 ticks = 25 cm (1 cell) -> 11.52 ticks/cm
 const float TICKS_PER_CELL_25CM = 288.0;
-const float TICKS_PER_90_DEG = 116.5;  // Average of 116-117 ticks
-const float TICKS_PER_180_DEG = 232.5; // Average of 232-233 ticks
+// const float TICKS_PER_90_DEG = 116.5;  // Average of 116-117 ticks
+const float TICKS_PER_180_DEG = 232.0; // Average of 232-233 ticks
+
+const float TICKS_PER_90_DEG = 140.0;  // Average of 116-117 ticks
+// const float TICKS_PER_180_DEG = 280.2; // Average of 232-233 ticks
 
 #define WHEEL_DIAMETER_CM 6.0f
 #define WHEELBASE_CM 15.5f
@@ -48,16 +51,25 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 
 #define WALL_THRESHOLD 20.0f
 #define FRONT_OBSTACLE WALL_THRESHOLD
-#define CENTER_DIST 5.0f
-#define SAFETY_DIST 7.5f
+#define CENTER_DIST 6.0f
+#define SAFETY_DIST 4.0f
 
 // --- Ultrasonic Sensor Pins ---
 #define PIN_ULTRA_FRONT_TRIG       24 // Black wire - Echo, Blue - Trig
 #define PIN_ULTRA_FRONT_ECHO       31
-#define PIN_ULTRA_LEFT_TRIG       22
-#define PIN_ULTRA_LEFT_ECHO       35
+#define PIN_ULTRA_LEFT_TRIG        22
+#define PIN_ULTRA_LEFT_ECHO        35
 #define PIN_ULTRA_RIGHT_TRIG       26
 #define PIN_ULTRA_RIGHT_ECHO       33
+
+#define PIN_GYRO_SCL    21  
+#define PIN_GYRO_SDA    20
+
+// MPU6050 mounted with +X toward the robot front, +Y to the right, +Z down.
+#define MPU6050_FRONT_AXIS_INDEX  0
+#define MPU6050_RIGHT_AXIS_INDEX  1
+#define MPU6050_DOWN_AXIS_INDEX   2
+#define MPU6050_YAW_AXIS_INDEX    MPU6050_DOWN_AXIS_INDEX
 
 #define NORTH 0
 #define EAST 1
