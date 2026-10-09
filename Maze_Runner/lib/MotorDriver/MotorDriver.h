@@ -3,40 +3,26 @@
 
 #include <Arduino.h>
 
-class MotorDriver {
-private:
-    uint8_t leftRpwm, leftLpwm;
-    uint8_t rightRpwm, rightLpwm;
-    uint8_t enablePin;
-    uint8_t leftEncA, leftEncB;
-    uint8_t rightEncA, rightEncB;
+// void setMotors(int leftSpeed, int rightSpeed);
+// void stopMotors();
 
-public:
-    MotorDriver(uint8_t lRpwm, uint8_t lLpwm, 
-                uint8_t rRpwm, uint8_t rLpwm, 
-                uint8_t enPin,
-                uint8_t lEncA, uint8_t lEncB, 
-                uint8_t rEncA, uint8_t rEncB);
+// float readUltrasonic(int trig, int echo);
+// void  readAllSensors();
 
-    void begin();
-    
-    // Raw speed outputs (-255 to 255)
-    void setSpeeds(int leftSpeed, int rightSpeed);
-    void stop();
-
-    // Encoder management
-    void resetEncoders();
-    long getLeftPulses();
-    long getRightPulses();
-
-    // Controlled closed-loop movements using Encoders & PI controller
-    void moveCells(float numCells, int basePwm = 70);
-    void turnRight90(int basePwm = 70);
-    void turn180(int basePwm = 70);
-
-    // Static ISR Callback Routines
-    static void handleLeftEncoder();
-    static void handleRightEncoder();
-};
-
+// void leftEncoderISR();
+// void rightEncoderISR();
+// void resetEncoders();
+// void moveDistanceCM(float distanceCM, int speed);
+// void turnDegrees(float degrees, int speed);
+void turnLeft();
+void turnRight();
+void turnAround();
+void turnDegrees(float degrees);
+void resetEncoders();
+void setMotors(int leftSpeed, int rightSpeed);
+moveDistanceCM(float distanceCM, int speed);
+void stopMotors();
+void leftEncoderISR();
+void rightEncoderISR();
+void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle);
 #endif // MOTOR_DRIVER_H

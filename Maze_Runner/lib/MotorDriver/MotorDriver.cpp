@@ -1,184 +1,246 @@
-#include "MotorDriver.h"
+#include <Arduino.h>
+#include <util/atomic.h>
 #include "config.h"
+#include "MotorDriver.h"
+#include "Ultrasonic.h"
+#include "globals.h"
 
-// Global pulse counters required for ISR access
-volatile long global_left_pulses = 0;
-volatile long global_right_pulses = 0;
-static uint8_t global_left_enc_b = 0;
-static uint8_t global_right_enc_b = 0;
+// // Global pulse counters required for ISR access
+volatile long leftEncoderCount  = 0;
+volatile long rightEncoderCount = 0;
+int currentHeading = NORTH;
 
-// Interrupt Service Routines
-void MotorDriver::handleLeftEncoder() {
-    if (digitalRead(global_left_enc_b) == HIGH) {
-        global_left_pulses++;
-    } else {
-        global_left_pulses--;
-    }
+// ================================================================
+// PROTOTYPES
+// ================================================================
+void turnDegrees(float degrees);
+void resetEncoders();
+void setMotors(int leftSpeed, int rightSpeed);
+void stopMotors();
+void leftEncoderISR();
+void rightEncoderISR();
+void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle);
+
+void turnLeft() {
+    turnDegrees(-90.0f);
+    currentHeading = (currentHeading + 3) % 4;
 }
 
-void MotorDriver::handleRightEncoder() {
-    if (digitalRead(global_right_enc_b) == HIGH) {
-        global_right_pulses--;
-    } else {
-        global_right_pulses++;
-    }
+void turnRight() {
+    turnDegrees(90.0f);
+    currentHeading = (currentHeading + 1) % 4;
 }
 
-MotorDriver::MotorDriver(uint8_t lRpwm, uint8_t lLpwm, 
-                         uint8_t rRpwm, uint8_t rLpwm, 
-                         uint8_t enPin,
-                         uint8_t lEncA, uint8_t lEncB, 
-                         uint8_t rEncA, uint8_t rEncB)
-    : leftRpwm(lRpwm), leftLpwm(lLpwm),
-      rightRpwm(rRpwm), rightLpwm(rLpwm),
-      enablePin(enPin),
-      leftEncA(lEncA), leftEncB(lEncB),
-      rightEncA(rEncA), rightEncB(rEncB) {}
-
-void MotorDriver::begin() {
-    // Configure Driver Pins
-    pinMode(leftRpwm, OUTPUT);
-    pinMode(leftLpwm, OUTPUT);
-    pinMode(rightRpwm, OUTPUT);
-    pinMode(rightLpwm, OUTPUT);
-    pinMode(enablePin, OUTPUT);
-
-    // Enable drivers
-    digitalWrite(enablePin, HIGH);
-
-    // Configure Encoder Pins
-    pinMode(leftEncA, INPUT_PULLUP);
-    pinMode(leftEncB, INPUT_PULLUP);
-    pinMode(rightEncA, INPUT_PULLUP);
-    pinMode(rightEncB, INPUT_PULLUP);
-
-    // Bind B pins for ISR direction checking
-    global_left_enc_b = leftEncB;
-    global_right_enc_b = rightEncB;
-
-    // Attach Hardware Interrupts
-    attachInterrupt(digitalPinToInterrupt(leftEncA), MotorDriver::handleLeftEncoder, RISING);
-    attachInterrupt(digitalPinToInterrupt(rightEncA), MotorDriver::handleRightEncoder, RISING);
-
-    stop();
+void turnAround() {
+    turnDegrees(180.0f);
+    currentHeading = (currentHeading + 2) % 4;
 }
 
-void MotorDriver::resetEncoders() {
-    noInterrupts();
-    global_left_pulses = 0;
-    global_right_pulses = 0;
-    interrupts();
-}
-
-long MotorDriver::getLeftPulses() {
-    noInterrupts();
-    long pulses = global_left_pulses;
-    interrupts();
-    return pulses;
-}
-
-long MotorDriver::getRightPulses() {
-    noInterrupts();
-    long pulses = global_right_pulses;
-    interrupts();
-    return pulses;
-}
-
-void MotorDriver::setSpeeds(int leftSpeed, int rightSpeed) {
-    // Left Motor Direction
-    if (leftSpeed >= 0) {
-        analogWrite(leftRpwm, constrain(leftSpeed, 0, 255));
-        analogWrite(leftLpwm, 0);
-    } else {
-        analogWrite(leftRpwm, 0);
-        analogWrite(leftLpwm, constrain(-leftSpeed, 0, 255));
-    }
-
-    // Right Motor Direction
-    if (rightSpeed >= 0) {
-        analogWrite(rightRpwm, constrain(rightSpeed, 0, 255));
-        analogWrite(rightLpwm, 0);
-    } else {
-        analogWrite(rightRpwm, 0);
-        analogWrite(rightLpwm, constrain(-rightSpeed, 0, 255));
-    }
-}
-
-void MotorDriver::stop() {
-    analogWrite(leftRpwm, 0);
-    analogWrite(leftLpwm, 0);
-    analogWrite(rightRpwm, 0);
-    analogWrite(rightLpwm, 0);
-}
-
-void MotorDriver::moveCells(float numCells, int basePwm) {
+void turnDegrees(float degrees) { // + value turns right, - value turns left
     resetEncoders();
 
-    long target_ticks = numCells * TICKS_PER_CELL_25CM;
-    double kp = 1.5;
-    double ki = 0.05;
-    double integral_error = 0;
+    float wheelCircumference = 3.14159f * WHEEL_DIAMETER_CM;
+    float distancePerWheel   = (3.14159f * WHEELBASE_CM * fabs(degrees)) / 360.0f;
 
-    while (true) {
-        long current_left = getLeftPulses();
-        long current_right = getRightPulses();
+    long targetCounts =
+        (long)(0.5f * ((distancePerWheel / wheelCircumference) * ENCODER_COUNTS_PER_REV));
 
-        if ((current_left + current_right) / 2 >= target_ticks) {
-            break;
+    if (fabs(degrees) > 170.0f) {
+        targetCounts = (long)(targetCounts * 1.03f);
+    }
+
+    long lCount = 0;
+    long rCount = 0;
+
+    while (abs(lCount) < targetCounts || abs(rCount) < targetCounts) {
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            lCount = leftEncoderCount;
+            rCount = rightEncoderCount;
         }
 
-        double error = current_left - current_right;
-        integral_error += error;
-        integral_error = constrain(integral_error, -300, 300);
+        if (degrees > 0) {
+            setPWM(PIN_LEFT_RPWM, 20000, TURN_SPEED);
+            setPWM(PIN_LEFT_LPWM, 20000, 0);
+            setPWM(PIN_RIGHT_RPWM, 20000, 0);
+            setPWM(PIN_RIGHT_LPWM, 20000, TURN_SPEED);
+        } else {
+            setPWM(PIN_LEFT_RPWM, 20000, 0);
+            setPWM(PIN_LEFT_LPWM, 20000, TURN_SPEED);
+            setPWM(PIN_RIGHT_RPWM, 20000, TURN_SPEED);
+            setPWM(PIN_RIGHT_LPWM, 20000, 0);
+        }
+    }
+    stopMotors();
+    delay(500);
+}
 
-        double correction = (kp * error) + (ki * integral_error);
+void setMotors(int leftSpeed, int rightSpeed) { // Set + value for forward, - value for backward
+    if (leftSpeed > 0) {
+        setPWM(PIN_LEFT_RPWM, 20000, leftSpeed);
+        setPWM(PIN_LEFT_LPWM, 20000, 0);
+    } else {
+        setPWM(PIN_LEFT_RPWM, 20000, 0);
+        setPWM(PIN_LEFT_LPWM, 20000, abs(leftSpeed));
+    }
 
-        int left_pwm = constrain(basePwm - correction, 0, 255);
-        int right_pwm = constrain(basePwm + correction, 0, 255);
+    if (rightSpeed > 0) {
+        setPWM(PIN_RIGHT_RPWM, 20000, rightSpeed);
+        setPWM(PIN_RIGHT_LPWM, 20000, 0);
+    } else {
+        setPWM(PIN_RIGHT_RPWM, 20000, 0);
+        setPWM(PIN_RIGHT_LPWM, 20000, abs(rightSpeed));
+    }
+}
 
-        setSpeeds(left_pwm, right_pwm);
+
+void moveDistanceCM(float distanceCM, int speed) {
+    if (isMovingForward || isTurning)
+        return;
+    isMovingForward = true;
+
+    integralError = 0.0f;
+    lastError     = 0.0f;
+
+    long targetCounts = (long)(distanceCM / CM_PER_COUNT);
+
+    Serial.print("Moving forward ");
+    Serial.print(distanceCM);
+    Serial.print("cm - Target counts: ");
+    Serial.println(targetCounts);
+
+    resetEncoders();
+
+    while (abs(leftEncoderCount) < targetCounts || abs(rightEncoderCount) < targetCounts) {
+        float currentFront = readUltrasonic(PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO);
+        if (currentFront < FRONT_OBSTACLE) {
+            Serial.println("Front obstacle detected during forward move! Stopping.");
+            stopMotors();
+            isMovingForward = false;
+            return;
+        }
+
+        setMotors(speed, speed);
         delay(10);
     }
 
-    stop();
+    stopMotors();
+    delay(200);
+
+    Serial.print("Forward completed - L: ");
+    Serial.print(leftEncoderCount);
+    Serial.print(" R: ");
+    Serial.println(rightEncoderCount);
+
+    isMovingForward = false;
 }
 
-void MotorDriver::turnRight90(int basePwm) {
-    resetEncoders();
-
-    while (true) {
-        if (getLeftPulses() >= TICKS_PER_90_DEG) {
-            break;
-        }
-
-        // Pivot turn right (Left motor forward, Right motor reverse)
-        analogWrite(leftRpwm, basePwm);
-        analogWrite(leftLpwm, 0);
-        analogWrite(rightRpwm, 0);
-        analogWrite(rightLpwm, basePwm);
-
-        delay(10);
+void resetEncoders() {
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        leftEncoderCount  = 0;
+        rightEncoderCount = 0;
     }
-
-    stop();
 }
 
-void MotorDriver::turn180(int basePwm) {
-    resetEncoders();
+void stopMotors() {
+    setPWM(PIN_LEFT_RPWM, 20000, 0);
+    setPWM(PIN_LEFT_LPWM, 20000, 0);
+    setPWM(PIN_RIGHT_RPWM, 20000, 0);
+    setPWM(PIN_RIGHT_LPWM, 20000, 0);
+}
 
-    while (true) {
-        if (getLeftPulses() >= TICKS_PER_180_DEG) {
-            break;
+void leftEncoderISR() {
+    if (digitalRead(PIN_LEFT_ENC_B) == HIGH)
+        leftEncoderCount--;
+    else
+        leftEncoderCount++;
+}
+
+void rightEncoderISR() {
+    if (digitalRead(PIN_RIGHT_ENC_B) == HIGH)
+        rightEncoderCount++;
+    else
+        rightEncoderCount--;
+}
+
+// Dont change, Bare Metal for PWM Generation
+void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle) {
+    if (freq == 0) return;
+    if (dutyCycle > 100) dutyCycle = 100;
+
+    static uint32_t timer3Freq = 0;
+    static uint32_t timer4Freq = 0;
+    static uint16_t timer3Top  = 0;
+    static uint16_t timer4Top  = 0;
+
+    // --- TIMER 3 (Pin 5 - OCR3A / PE3) ---
+    if (pin == 5) {
+        // Reconfigure if frequency changed or not initialized
+        if (timer3Freq != freq) {
+            uint8_t prescalerBits = (freq > 30000) ? 1 : (freq > 4000) ? 2 : 3;
+            uint16_t prescaler    = (prescalerBits == 1) ? 1 : (prescalerBits == 2) ? 8 : 64;
+            uint32_t top          = (F_CPU / (prescaler * freq)) - 1;
+            if (top > 65535) top  = 65535;
+
+            timer3Top  = (uint16_t)top;
+            timer3Freq = freq;
+
+            TCCR3A = (1 << WGM31);                          // Fast PWM, Mode 14
+            TCCR3B = (1 << WGM33) | (1 << WGM32) | prescalerBits;
+            ICR3   = timer3Top;
         }
 
-        // Pivot turn 180 deg
-        analogWrite(leftRpwm, basePwm);
-        analogWrite(leftLpwm, 0);
-        analogWrite(rightRpwm, 0);
-        analogWrite(rightLpwm, basePwm);
-
-        delay(10);
+        if (dutyCycle == 0) {
+            TCCR3A &= ~(1 << COM3A1); // Disconnect Timer from Pin (True 0V OFF)
+            PORTE  &= ~(1 << PE3);    // Force Pin LOW
+        } else {
+            OCR3A   = (uint32_t)timer3Top * dutyCycle / 100;
+            TCCR3A |= (1 << COM3A1);  // Connect Timer to Pin (Non-inverting)
+        }
     }
 
-    stop();
+    // --- TIMER 4 (Pins 6, 7, 8 - OCR4A, OCR4B, OCR4C) ---
+    else if (pin == 6 || pin == 7 || pin == 8) {
+        // Reconfigure if frequency changed or not initialized
+        if (timer4Freq != freq) {
+            uint8_t prescalerBits = (freq > 30000) ? 1 : (freq > 4000) ? 2 : 3;
+            uint16_t prescaler    = (prescalerBits == 1) ? 1 : (prescalerBits == 2) ? 8 : 64;
+            uint32_t top          = (F_CPU / (prescaler * freq)) - 1;
+            if (top > 65535) top  = 65535;
+
+            timer4Top  = (uint16_t)top;
+            timer4Freq = freq;
+
+            TCCR4A = (1 << WGM41);                          // Fast PWM, Mode 14
+            TCCR4B = (1 << WGM43) | (1 << WGM42) | prescalerBits;
+            ICR4   = timer4Top;
+        }
+
+        uint16_t ocr = (uint32_t)timer4Top * dutyCycle / 100;
+
+        if (pin == 6) {
+            if (dutyCycle == 0) {
+                TCCR4A &= ~(1 << COM4A1);
+                PORTH  &= ~(1 << PH3);
+            } else {
+                OCR4A   = ocr;
+                TCCR4A |= (1 << COM4A1);
+            }
+        } else if (pin == 7) {
+            if (dutyCycle == 0) {
+                TCCR4A &= ~(1 << COM4B1);
+                PORTH  &= ~(1 << PH4);
+            } else {
+                OCR4B   = ocr;
+                TCCR4A |= (1 << COM4B1);
+            }
+        } else if (pin == 8) {
+            if (dutyCycle == 0) {
+                TCCR4A &= ~(1 << COM4C1);
+                PORTH  &= ~(1 << PH5);
+            } else {
+                OCR4C   = ocr;
+                TCCR4A |= (1 << COM4C1);
+            }
+        }
+    }
 }
