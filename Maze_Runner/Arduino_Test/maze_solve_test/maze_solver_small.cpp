@@ -24,6 +24,9 @@ const float GYRO_HEADING_GAIN = 0.8f;
 const float MAX_GYRO_STEER_DUTY = 6.0f;
 const float MAX_COMBINED_STEER_DUTY = 10.0f;
 const float GYRO_HEADING_DEADBAND_DEG = 1.0f;
+const float ENCODER_SYNC_GAIN = 0.35f;    // duty percentage per tick of wheel progress mismatch
+const float MAX_ENCODER_SYNC_DUTY = 8.0f;
+const long ENCODER_SYNC_DEADBAND_TICKS = 1;
 
 // MPU6050 is mounted with +Z down, so Z gyro rate is positive for a
 // clockwise (right) turn. Calibrate the stationary bias at every boot.
@@ -47,8 +50,8 @@ float eprevL = 0, eintegralL = 0;
 float eprevR = 0, eintegralR = 0;
 long  prevT = 0;
 
-const float kpL = 2.5f, kdL = 0.0f, kiL = 0.0f;
-const float kpR = 2.5f, kdR = 0.0f, kiR = 0.0f;
+const float kpL = 4.5f, kdL = 0.0f, kiL = 0.0f;
+const float kpR = 4.5f, kdR = 0.0f, kiR = 0.0f;
 
 float frontDist, leftDist, rightDist;
 
@@ -258,6 +261,8 @@ void moveForwardPID() {
     prevT      = micros();
 
     bool          reached            = false;
+    bool          leftDone           = false;
+    bool          rightDone          = false;
     unsigned long startTime          = millis();
     unsigned long lastCheck          = 0;
     unsigned long nextGyroSampleUs   = micros();
@@ -266,6 +271,7 @@ void moveForwardPID() {
     float gyroSteering               = 0.0f;
     float         steeringAdjustment = 0;
     int16_t gyroRaw[3];
+    unsigned long lastDriveReportMs = startTime;
 
     while (!reached) {
         if (millis() - startTime > 4000)
@@ -356,6 +362,24 @@ void moveForwardPID() {
         eintegralR += eR * deltaT;
         float uR = kpR * eR + kdR * dedtR + kiR * eintegralR;
 
+        // Latch each wheel as complete independently. Do not reverse or keep
+        // driving a wheel while waiting for the other encoder to catch up.
+        if (leftPos >= targetL - 5) leftDone = true;
+        if (rightPos >= targetR - 5) rightDone = true;
+
+        // Balance wheel progress directly. A positive value means the left
+        // wheel is ahead, so reduce its duty and give the right wheel more.
+        long encoderDifference = leftPos - rightPos;
+        if (labs(encoderDifference) <= ENCODER_SYNC_DEADBAND_TICKS) encoderDifference = 0;
+        const float encoderSync = constrain(
+            encoderDifference * ENCODER_SYNC_GAIN,
+            -MAX_ENCODER_SYNC_DUTY,
+            MAX_ENCODER_SYNC_DUTY);
+        const float totalSteering = constrain(
+            steeringAdjustment + encoderSync,
+            -MAX_COMBINED_STEER_DUTY - MAX_ENCODER_SYNC_DUTY,
+            MAX_COMBINED_STEER_DUTY + MAX_ENCODER_SYNC_DUTY);
+
         float pwrL = fabs(uL);
         float pwrR = fabs(uR);
 
@@ -364,8 +388,13 @@ void moveForwardPID() {
         if (pwrR > MAX_DUTY)
             pwrR = MAX_DUTY;
 
-        pwrL -= steeringAdjustment;
-        pwrR += steeringAdjustment;
+        // Reduce coast near the destination; the proportional controller is
+        // otherwise saturated at MAX_DUTY until only a few ticks remain.
+        if (!leftDone && eL > 0 && eL <= 25 && pwrL > 20.0f) pwrL = 20.0f;
+        if (!rightDone && eR > 0 && eR <= 25 && pwrR > 20.0f) pwrR = 20.0f;
+
+        pwrL -= totalSteering;
+        pwrR += totalSteering;
 
         if (pwrL > MAX_DUTY + 5)
             pwrL = MAX_DUTY + 5;
@@ -376,14 +405,27 @@ void moveForwardPID() {
         if (pwrR < 0)
             pwrR = 0;
 
+        if (leftDone) pwrL = 0;
+        if (rightDone) pwrR = 0;
+
         int dirL = (uL > 0) ? 1 : -1;
         int dirR = (uR > 0) ? 1 : -1;
 
-        if (abs(eL) < 5 && abs(eR) < 5) {
+        if (leftDone && rightDone) {
             reached = true;
             stopMotors();
         } else {
-            setMotors(dirL * pwrL, dirR * pwrR);
+            setMotors(leftDone ? 0 : dirL * pwrL,
+                      rightDone ? 0 : dirR * pwrR);
+        }
+
+        if (millis() - lastDriveReportMs >= 250UL) {
+            Serial.print(F("FWD ticks L/R=")); Serial.print(leftPos); Serial.print('/'); Serial.print(rightPos);
+            Serial.print(F(" yaw err=")); Serial.print(gyroHeadingDeg - gyroHeadingTargetDeg, 1);
+            Serial.print(F(" steer U/G/E=")); Serial.print(ultrasonicSteering, 1); Serial.print('/');
+            Serial.print(gyroSteering, 1); Serial.print('/'); Serial.print(encoderSync, 1);
+            Serial.print(F(" PWM L/R=")); Serial.print(pwrL, 1); Serial.print('/'); Serial.println(pwrR, 1);
+            lastDriveReportMs = millis();
         }
 
         eprevL = eL;

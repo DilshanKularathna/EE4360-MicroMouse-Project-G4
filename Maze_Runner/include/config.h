@@ -43,8 +43,8 @@ const float TICKS_PER_180_DEG = 232.0; // Average of 232-233 ticks
 const float TICKS_PER_90_DEG = 140.0;  // Average of 116-117 ticks
 // const float TICKS_PER_180_DEG = 280.2; // Average of 232-233 ticks
 
-#define WHEEL_DIAMETER_CM 6.0f
-#define WHEELBASE_CM 15.5f
+#define WHEEL_DIAMETER_CM 6.5f
+#define WHEELBASE_CM 17.5f
 #define ENCODER_COUNTS_PER_REV 360
 static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCODER_COUNTS_PER_REV);
 #define TURN_SPEED 25
@@ -52,7 +52,7 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 #define WALL_THRESHOLD 20.0f
 #define FRONT_OBSTACLE WALL_THRESHOLD
 #define CENTER_DIST 6.0f
-#define SAFETY_DIST 4.0f
+#define SAFETY_DIST 5.0f
 
 // --- Ultrasonic Sensor Pins ---
 #define PIN_ULTRA_FRONT_TRIG       24 // Black wire - Echo, Blue - Trig
