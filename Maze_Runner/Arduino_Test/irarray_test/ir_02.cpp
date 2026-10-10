@@ -9,7 +9,7 @@ int normalizedSensors[NUM_IR_SENSORS];
 // ==========================================
 // SPEED & PID TUNING PARAMETERS
 // ==========================================
-const int BASE_PWM = 30; // Forward cruising speed
+const int BASE_IR_PWM = 30; // Forward cruising speed
 const int MAX_PWM = 100; // Overall Motor PWM limit
 
 // PID Gains for smooth steering
@@ -116,6 +116,7 @@ bool getLinePosition(int &position)
   position = weightedSum / totalValue;
   return true;
 }
+
 void handleLostLine()
 {
   if (!lineLost)
@@ -145,7 +146,7 @@ void handleLostLine()
   else
   {
     // No info yet (e.g. just started) -> go straight
-    setMotorSpeeds(BASE_PWM, BASE_PWM);
+    setMotorSpeeds(BASE_IR_PWM, BASE_IR_PWM);
   }
 }
 
@@ -183,8 +184,8 @@ void followLinePID()
 
   float adjustment = (Kp * error) + (Ki * lineIntegral) + (Kd * derivative);
 
-  int leftMotorSpeed = BASE_PWM + adjustment;
-  int rightMotorSpeed = BASE_PWM - adjustment;
+  int leftMotorSpeed = BASE_IR_PWM + adjustment;
+  int rightMotorSpeed = BASE_IR_PWM - adjustment;
 
   setMotorSpeeds(leftMotorSpeed, rightMotorSpeed);
 }
@@ -206,8 +207,8 @@ void followLinePID()
 
 //   // Correct motor control assignment:
 //   // When line moves RIGHT (position > 3500, error > 0), left motor speeds up & right slows down to turn RIGHT.
-//   int leftMotorSpeed  = BASE_PWM + adjustment;
-//   int rightMotorSpeed = BASE_PWM - adjustment;
+//   int leftMotorSpeed  = BASE_IR_PWM + adjustment;
+//   int rightMotorSpeed = BASE_IR_PWM - adjustment;
 
 //   setMotorSpeeds(leftMotorSpeed, rightMotorSpeed);
 // }
