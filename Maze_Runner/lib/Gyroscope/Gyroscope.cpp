@@ -1,7 +1,8 @@
 #include "Gyroscope.h"
-#include "motorDriver.h"
+#include "MotorDriver.h"
 #include "Wire.h"
-
+#include "Arduino.h"
+#include "config.h"
 // MPU6050 is mounted with +Z down, so Z gyro rate is positive for a
 // clockwise (right) turn. Calibrate the stationary bias at every boot.
 // Hardware & Config Definitions
