@@ -5,13 +5,7 @@
 // Map to your IR sensors from config.h (Assuming IR7 is Left-most, IR0 is Right-most)
 const uint8_t IR_PINS[8] = {IR7, IR6, IR5, IR4, IR3, IR2, IR1, IR0};
 
-// Using your DEFAULT_IR_THRESHOLDS from config.h instead of their hardcoded 700s
-const int THRESHOLDS[8] = {
-    DEFAULT_IR_THRESHOLDS[0], DEFAULT_IR_THRESHOLDS[1], 
-    DEFAULT_IR_THRESHOLDS[2], DEFAULT_IR_THRESHOLDS[3], 
-    DEFAULT_IR_THRESHOLDS[4], DEFAULT_IR_THRESHOLDS[5], 
-    DEFAULT_IR_THRESHOLDS[6], DEFAULT_IR_THRESHOLDS[7]
-};
+const int THRESHOLDS[8] = {818, 814, 804, 796, 807, 808, 801, 837};
 
 // If Black Line gives high analog reading (your blackValues are ~920, whiteValues ~700)
 const bool SENSOR_ACTIVE_IS_HIGH = true;

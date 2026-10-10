@@ -30,7 +30,8 @@
 #define NUM_IR_SENSORS       8
 
 // Default Thresholds (Updated via calibration utility)
-const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
+//const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
+
 
 // Calibrated Values (From line_follower_test.ino)
 const int whiteValues[NUM_IR_SENSORS] = {711, 705, 684, 670, 691, 694, 681, 751};
