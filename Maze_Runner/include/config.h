@@ -16,16 +16,25 @@
 #define PIN_LEFT_ENC_B      19
 
 // --- IR Sensor Array Pins ---
-#define PIN_IR_EN            49
-const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
+// IR Sensors (8-Channel Array)
+#define IR7 A15
+#define IR6 A14
+#define IR5 A13
+#define IR4 A12
+#define IR3 A11
+#define IR2 A10
+#define IR1 A9
+#define IR0 A8
+#define IR_EN 49
+// const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
 #define NUM_IR_SENSORS       8
 
 // Default Thresholds (Updated via calibration utility)
 const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
 
 // Calibrated Values (From line_follower_test.ino)
-const int WHITE_VALUES[8] = {288, 158, 195, 324, 382, 516, 492, 460};
-const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
+const int whiteValues[NUM_IR_SENSORS] = {711, 705, 684, 670, 691, 694, 681, 751};
+const int blackValues[NUM_IR_SENSORS] = {925, 923, 923, 922, 922, 922, 921, 923};
 
 // Default PID Parameters
 #define DEFAULT_BASE_PWM    100
@@ -59,6 +68,7 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 #define PIN_ULTRA_RIGHT_TRIG       26
 #define PIN_ULTRA_RIGHT_ECHO       33
 
+// Direction Definitions
 #define NORTH 0
 #define EAST 1
 #define SOUTH 2
