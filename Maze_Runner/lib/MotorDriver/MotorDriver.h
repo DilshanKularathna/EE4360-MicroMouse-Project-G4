@@ -20,7 +20,7 @@ void turnAround();
 void turnDegrees(float degrees);
 void resetEncoders();
 void setMotors(int leftSpeed, int rightSpeed);
-moveDistanceCM(float distanceCM, int speed);
+void moveDistanceCM(float distanceCM, int speed);
 void stopMotors();
 void leftEncoderISR();
 void rightEncoderISR();

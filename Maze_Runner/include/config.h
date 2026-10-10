@@ -69,6 +69,14 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 #define PIN_ULTRA_RIGHT_TRIG       26
 #define PIN_ULTRA_RIGHT_ECHO       33
 
+// --- Ultrasonic Sensor Calibration (Linear model: Calibrated = Raw * SCALE + OFFSET) ---
+#define ULTRA_FRONT_SCALE          1.0f
+#define ULTRA_FRONT_OFFSET         0.0f
+#define ULTRA_LEFT_SCALE           1.0f
+#define ULTRA_LEFT_OFFSET          0.0f
+#define ULTRA_RIGHT_SCALE          1.0f
+#define ULTRA_RIGHT_OFFSET         0.0f
+
 // Direction Definitions
 #define NORTH 0
 #define EAST 1
