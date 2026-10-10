@@ -232,7 +232,6 @@ void performLTurn(bool turnLeft) {
     Serial.println("✅ L-turn complete! Resuming line following...");
 }
 
-}  // namespace
 
 void setup() {
     Serial.begin(115200);
