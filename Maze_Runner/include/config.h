@@ -17,16 +17,16 @@
 
 // --- IR Sensor Array Pins ---
 // IR Sensors (8-Channel Array)
-#define IR7 A15
+#define IR7 A15 // Robot's right most IR sensor
 #define IR6 A14
 #define IR5 A13
 #define IR4 A12
 #define IR3 A11
 #define IR2 A10
 #define IR1 A9
-#define IR0 A8
+#define IR0 A8 // Robot's Left most IR sensor
 #define IR_EN 49
-// const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
+const uint8_t IR_PINS[8] = {IR0, IR1, IR2, IR3, IR4, IR5, IR6, IR7}; // Left(index 0) to Right(index 7)
 #define NUM_IR_SENSORS       8
 
 // Default Thresholds (Updated via calibration utility)

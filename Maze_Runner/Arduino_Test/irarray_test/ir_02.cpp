@@ -82,11 +82,11 @@ const float SENSOR_EXPONENT = 2.5;
 
 void readSensors()
 {
-  const int sensorPins[NUM_IR_SENSORS] = {IR0, IR1, IR2, IR3, IR4, IR5, IR6, IR7};
+  // const int IR_PINS[NUM_IR_SENSORS] = {IR0, IR1, IR2, IR3, IR4, IR5, IR6, IR7};
 
   for (int i = 0; i < NUM_IR_SENSORS; i++)
   {
-    rawSensors[i] = analogRead(sensorPins[i]);
+    rawSensors[i] = analogRead(IR_PINS[i]);
     int clamped = constrain(rawSensors[i], whiteValues[i], blackValues[i]);
     float ratio = (float)(clamped - whiteValues[i]) / (float)(blackValues[i] - whiteValues[i]);
     float curvedRatio = pow(ratio, SENSOR_EXPONENT);
