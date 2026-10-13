@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EE4360 Micromouse Maze Explorer — Visual Simulator</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2236;
+            --bg-hover: #1f2b42;
+            --text-primary: #e8edf5;
+            --text-secondary: #8b95a8;
+            --text-muted: #5a6478;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --accent-purple: #8b5cf6;
+            --accent-green: #10b981;
+            --accent-orange: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-pink: #ec4899;
+            --wall-color: #e2e8f0;
+            --cell-unvisited: #161e30;
+            --cell-visited: rgba(59, 130, 246, 0.12);
+            --cell-current: rgba(16, 185, 129, 0.35);
+            --cell-start: rgba(139, 92, 246, 0.3);
+            --cell-goal: rgba(245, 158, 11, 0.3);
+            --cell-bridge-marker: rgba(236, 72, 153, 0.3);
+            --bridge-bg: rgba(139, 92, 246, 0.08);
+            --border-subtle: rgba(255,255,255,0.06);
+            --glow-blue: 0 0 20px rgba(59,130,246,0.3);
+            --glow-green: 0 0 20px rgba(16,185,129,0.3);
+        }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+        /* ---- Header ---- */
+        .header {
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: linear-gradient(180deg, rgba(59,130,246,0.04) 0%, transparent 100%);
+        }
+        .header-logo {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 16px; color: #fff;
+        }
+        .header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+        .header-subtitle { font-size: 13px; color: var(--text-secondary); margin-left: auto; font-family: 'JetBrains Mono', monospace; }
+        .state-badge {
+            padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
+            font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px;
+            background: rgba(59,130,246,0.15); color: var(--accent-blue); border: 1px solid rgba(59,130,246,0.2);
+            transition: all 0.3s ease;
+        }
+        .state-badge.exploring-a { background: rgba(59,130,246,0.15); color: var(--accent-blue); border-color: rgba(59,130,246,0.3); }
+        .state-badge.bridge { background: rgba(236,72,153,0.15); color: var(--accent-pink); border-color: rgba(236,72,153,0.3); }
+        .state-badge.exploring-b { background: rgba(139,92,246,0.15); color: var(--accent-purple); border-color: rgba(139,92,246,0.3); }
+        .state-badge.completed { background: rgba(16,185,129,0.15); color: var(--accent-green); border-color: rgba(16,185,129,0.3); }
+        .state-badge.failed { background: rgba(239,68,68,0.15); color: var(--accent-red); border-color: rgba(239,68,68,0.3); }
+
+        /* ---- Main Layout ---- */
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 0;
+            height: calc(100vh - 68px);
+        }
+        /* ---- Maze Canvas Area ---- */
+        .maze-viewport {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            overflow-y: auto;
+            gap: 20px;
+        }
+        .maze-section-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .maze-label {
+            font-size: 13px; font-weight: 600; color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace; letter-spacing: 1px; text-transform: uppercase;
+        }
+        .maze-canvas-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+            position: relative;
+        }
+        canvas { display: block; border-radius: 8px; }
+        .bridge-connector {
+            display: flex; align-items: center; justify-content: center;
+            padding: 8px 0; gap: 8px;
+        }
+        .bridge-line {
+            width: 3px; height: 40px; border-radius: 2px;
+            background: linear-gradient(180deg, var(--accent-pink), var(--accent-purple));
+            animation: bridgePulse 2s ease-in-out infinite;
+        }
+        @keyframes bridgePulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
+        .bridge-label {
+            font-size: 11px; color: var(--accent-pink);
+            font-family: 'JetBrains Mono', monospace; letter-spacing: 1px;
+            writing-mode: vertical-rl; transform: rotate(180deg);
+        }
+        /* ---- Side Panel ---- */
+        .side-panel {
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-subtle);
+            display: flex; flex-direction: column;
+            overflow-y: auto;
+        }
+        .panel-section {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .panel-section-title {
+            font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+            color: var(--text-muted); margin-bottom: 12px;
+        }
+        /* Controls */
+        .control-row {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+        }
+        .control-row label {
+            font-size: 12px; font-weight: 500; color: var(--text-secondary); min-width: 90px;
+        }
+        .control-row select, .control-row input[type="number"] {
+            flex: 1; padding: 6px 10px; border-radius: 8px;
+            background: var(--bg-card); border: 1px solid var(--border-subtle);
+            color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 12px;
+            outline: none; transition: border-color 0.2s;
+        }
+        .control-row select:focus, .control-row input:focus {
+            border-color: var(--accent-blue);
+        }
+        .btn-group { display: flex; gap: 8px; margin-top: 12px; }
+        .btn {
+            flex: 1; padding: 10px 16px; border-radius: 10px; border: none;
+            font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s ease; letter-spacing: 0.3px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: #fff;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: var(--glow-blue); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-secondary {
+            background: var(--bg-card); color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+        }
+        .btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .btn-step {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            color: #fff;
+        }
+        .btn-step:hover { transform: translateY(-1px); box-shadow: var(--glow-green); }
+        .btn-step:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+        /* Speed slider */
+        .speed-row {
+            display: flex; align-items: center; gap: 8px; margin-top: 8px;
+        }
+        .speed-row label { font-size: 12px; color: var(--text-secondary); min-width: 60px; }
+        .speed-row input[type="range"] {
+            flex: 1; accent-color: var(--accent-blue);
+        }
+        .speed-val { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--accent-cyan); min-width: 45px; text-align: right; }
+        /* Stats */
+        .stats-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+        }
+        .stat-card {
+            background: var(--bg-card); border-radius: 10px; padding: 10px 12px;
+            border: 1px solid var(--border-subtle);
+        }
+        .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .stat-value { font-size: 16px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+        .stat-value.blue { color: var(--accent-blue); }
+        .stat-value.green { color: var(--accent-green); }
+        .stat-value.purple { color: var(--accent-purple); }
+        .stat-value.orange { color: var(--accent-orange); }
+        .stat-value.cyan { color: var(--accent-cyan); }
+        .stat-value.pink { color: var(--accent-pink); }
+        /* Log */
+        .log-container {
+            flex: 1; min-height: 0; display: flex; flex-direction: column;
+            padding: 0 20px 16px 20px;
+        }
+        .log-title {
+            font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+            color: var(--text-muted); margin-bottom: 8px; padding-top: 16px;
+        }
+        .log-scroll {
+            flex: 1; overflow-y: auto; background: var(--bg-card); border-radius: 10px;
+            border: 1px solid var(--border-subtle); padding: 10px;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6;
+            max-height: 280px;
+        }
+        .log-entry { padding: 2px 0; }
+        .log-step { color: var(--text-muted); }
+        .log-action { color: var(--accent-cyan); }
+        .log-wall { color: var(--accent-orange); }
+        .log-state { color: var(--accent-pink); font-weight: 600; }
+        .log-goal { color: var(--accent-green); font-weight: 600; }
+        /* Wall map grid */
+        .wallmap-container {
+            overflow-x: auto; padding: 8px 0;
+        }
+        .wallmap-table {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            border-collapse: collapse; width: 100%;
+        }
+        .wallmap-table td, .wallmap-table th {
+            text-align: center; padding: 3px 4px;
+            border: 1px solid var(--border-subtle);
+        }
+        .wallmap-table th { color: var(--text-muted); font-weight: 500; }
+        .wallmap-table td { color: var(--text-secondary); background: var(--bg-card); }
+        .wallmap-table td.visited { color: var(--accent-blue); background: rgba(59,130,246,0.06); }
+        .wallmap-table td.current { color: var(--accent-green); background: rgba(16,185,129,0.1); font-weight: 700; }
+        /* Legend */
+        .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); }
+        .legend-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-logo">M</div>
+        <h1>Micromouse Maze Explorer Simulator</h1>
+        <span class="state-badge exploring-a" id="stateBadge">IDLE</span>
+        <span class="header-subtitle" id="stepCounter">Step: 0</span>
+    </div>
+
+    <div class="main-container">
+        <!-- Maze Viewport -->
+        <div class="maze-viewport">
+            <div class="maze-section-container">
+                <span class="maze-label">Section A — 4 × 4</span>
+                <div class="maze-canvas-wrap">
+                    <canvas id="canvasA" width="280" height="280"></canvas>
+                </div>
+            </div>
+            <div class="bridge-connector">
+                <div class="bridge-line"></div>
+                <span class="bridge-label">BRIDGE</span>
+                <div class="bridge-line"></div>
+            </div>
+            <div class="maze-section-container">
+                <span class="maze-label">Section B — 9 × 9</span>
+                <div class="maze-canvas-wrap">
+                    <canvas id="canvasB" width="504" height="504"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Side Panel -->
+        <div class="side-panel">
+            <!-- Maze Config -->
+            <div class="panel-section">
+                <div class="panel-section-title">Maze Configuration</div>
+                <div class="control-row">
+                    <label>Start A (x,y)</label>
+                    <input type="number" id="startAx" value="0" min="0" max="3" style="width:50px">
+                    <input type="number" id="startAy" value="0" min="0" max="3" style="width:50px">
+                </div>
+                <div class="control-row">
+                    <label>Goal B (x,y)</label>
+                    <input type="number" id="goalBx" value="4" min="0" max="8" style="width:50px">
+                    <input type="number" id="goalBy" value="4" min="0" max="8" style="width:50px">
+                </div>
+                <div class="control-row">
+                    <label>Bridge A exit</label>
+                    <select id="bridgeCornerA">
+                        <option value="topRight" selected>(3,3) NE Corner</option>
+                        <option value="topLeft">(0,3) NW Corner</option>
+                        <option value="bottomRight">(3,0) SE Corner</option>
+                        <option value="bottomLeft">(0,0) SW Corner</option>
+                    </select>
+                </div>
+                <div class="control-row">
+                    <label>Bridge B entry</label>
+                    <select id="bridgeCornerB">
+                        <option value="topRight">(8,8) NE Corner</option>
+                        <option value="topLeft">(0,8) NW Corner</option>
+                        <option value="bottomRight">(8,0) SE Corner</option>
+                        <option value="bottomLeft" selected>(0,0) SW Corner</option>
+                    </select>
+                </div>
+                <div class="control-row">
+                    <label>Maze Seed</label>
+                    <input type="number" id="mazeSeed" value="42" min="0" max="99999" style="width:80px">
+                </div>
+                <div class="speed-row">
+                    <label>Speed</label>
+                    <input type="range" id="speedSlider" min="1" max="100" value="15">
+                    <span class="speed-val" id="speedVal">15</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="btnRun">▶ Run</button>
+                    <button class="btn btn-step" id="btnStep" disabled>⏭ Step</button>
+                    <button class="btn btn-secondary" id="btnReset">↻ Reset</button>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="panel-section">
+                <div class="panel-section-title">Exploration Statistics</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Steps</div>
+                        <div class="stat-value cyan" id="statSteps">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Heading</div>
+                        <div class="stat-value blue" id="statHeading">N</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">A Visited</div>
+                        <div class="stat-value blue" id="statVisitedA">0/16</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">B Visited</div>
+                        <div class="stat-value purple" id="statVisitedB">0/81</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Position</div>
+                        <div class="stat-value green" id="statPos">(0,0)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Stack Size</div>
+                        <div class="stat-value orange" id="statStack">0</div>
+                    </div>
+                </div>
+                <div class="legend" style="margin-top:12px;">
+                    <div class="legend-item"><div class="legend-swatch" style="background:var(--cell-start)"></div>Start</div>
+                    <div class="legend-item"><div class="legend-swatch" style="background:var(--cell-goal)"></div>Goal</div>
+                    <div class="legend-item"><div class="legend-swatch" style="background:var(--cell-visited)"></div>Visited</div>
+                    <div class="legend-item"><div class="legend-swatch" style="background:var(--cell-current)"></div>Current</div>
+                    <div class="legend-item"><div class="legend-swatch" style="background:var(--cell-bridge-marker)"></div>Bridge Marker</div>
+                </div>
+            </div>
+
+            <!-- Wall Map -->
+            <div class="panel-section">
+                <div class="panel-section-title">Mapped Wall Bitmasks (Robot's Knowledge)</div>
+                <div class="wallmap-container" id="wallmapContainer">
+                    <em style="font-size:11px;color:var(--text-muted)">Run simulation to see mapped data</em>
+                </div>
+            </div>
+
+            <!-- Log -->
+            <div class="log-container">
+                <div class="log-title">Exploration Log</div>
+                <div class="log-scroll" id="logScroll"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+// ========================================================================
+// EE4360 Micromouse Maze Explorer — Simulation Engine
+// ========================================================================
+// This is a 1:1 JavaScript port of the C++ MazeExplorer algorithm from
+// maze_explorer.cpp / maze_types.h / robot_hardware_interface.h
+// with a simulated IRobotPlatform that returns perfect sensor data.
+// ========================================================================
+
+// --- Constants (mirroring maze_types.h) ---
+const DIR_NORTH = 0, DIR_EAST = 1, DIR_SOUTH = 2, DIR_WEST = 3;
+const WALL_NORTH = 1 << 0, WALL_EAST = 1 << 1, WALL_SOUTH = 1 << 2, WALL_WEST = 1 << 3;
+const CELL_VISITED = 1 << 4;
+const MAZE_A_SIZE = 4, MAZE_B_SIZE = 9;
+const GRID_A_WORK_SIZE = 7;
+const MAX_STACK_SIZE = 200;
+
+const DIR_NAMES = ['N','E','S','W'];
+const DIR_DX = [0, 1, 0, -1];
+const DIR_DY = [1, 0, -1, 0];
+const WALL_MASKS = [WALL_NORTH, WALL_EAST, WALL_SOUTH, WALL_WEST];
+
+const TILE_NORMAL_BLACK = 0, TILE_WHITE = 1, TILE_BRIDGE_MARKER = 2;
+
+const STATE_INIT = 0, STATE_EXPLORE_A = 1, STATE_APPROACH_BRIDGE = 2,
+      STATE_CROSSING_BRIDGE = 3, STATE_ENTER_B = 4, STATE_EXPLORE_B = 5,
+      STATE_COMPLETED = 6, STATE_FAILED = 7;
+
+const STATE_NAMES = ['INIT','EXPLORE_A','APPROACH_BRIDGE','CROSSING_BRIDGE','ENTER_B','EXPLORE_B','COMPLETED','FAILED'];
+
+// ========================================================================
+// Seeded PRNG (Mulberry32)
+// ========================================================================
+function mulberry32(a) {
+    return function() {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+// ========================================================================
+// Maze Generator — Recursive Backtracker (guarantees all cells reachable)
+// ========================================================================
+function generateMaze(rows, cols, seed) {
+    const rng = mulberry32(seed);
+    // walls[y][x] is a bitmask: bit 0=N, bit 1=E, bit 2=S, bit 3=W
+    // Start with ALL walls present
+    const walls = [];
+    for (let y = 0; y < rows; y++) {
+        walls[y] = [];
+        for (let x = 0; x < cols; x++) {
+            walls[y][x] = 0x0F; // all 4 walls
+        }
+    }
+
+    // DFS carve
+    const visited = Array.from({length: rows}, () => Array(cols).fill(false));
+    const stack = [];
+    const start = { x: Math.floor(rng() * cols), y: Math.floor(rng() * rows) };
+    visited[start.y][start.x] = true;
+    stack.push(start);
+
+    while (stack.length > 0) {
+        const curr = stack[stack.length - 1];
+        const neighbors = [];
+        for (let d = 0; d < 4; d++) {
+            const nx = curr.x + DIR_DX[d];
+            const ny = curr.y + DIR_DY[d];
+            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && !visited[ny][nx]) {
+                neighbors.push({ x: nx, y: ny, dir: d });
+            }
+        }
+        if (neighbors.length === 0) {
+            stack.pop();
+        } else {
+            const pick = neighbors[Math.floor(rng() * neighbors.length)];
+            // Remove wall between curr and pick
+            walls[curr.y][curr.x] &= ~WALL_MASKS[pick.dir];
+            const opposite = (pick.dir + 2) % 4;
+            walls[pick.y][pick.x] &= ~WALL_MASKS[opposite];
+            visited[pick.y][pick.x] = true;
+            stack.push(pick);
+        }
+    }
+
+    // Remove some extra walls to create multiple paths (makes DFS more interesting)
+    for (let i = 0; i < Math.floor(rows * cols * 0.15); i++) {
+        const x = Math.floor(rng() * cols);
+        const y = Math.floor(rng() * rows);
+        const d = Math.floor(rng() * 4);
+        const nx = x + DIR_DX[d], ny = y + DIR_DY[d];
+        if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+            walls[y][x] &= ~WALL_MASKS[d];
+            walls[ny][nx] &= ~WALL_MASKS[(d + 2) % 4];
+        }
+    }
+
+    return walls;
+}
+
+// ========================================================================
+// Simulated Robot Platform (perfect sensors)
+// ========================================================================
+class SimulatedPlatform {
+    constructor(truthMazeA, truthMazeB, startTile, goalTile, bridgeMarkerA, bridgeMarkerB) {
+        this.truthA = truthMazeA;
+        this.truthB = truthMazeB;
+        this.startTile = startTile;
+        this.goalTile = goalTile;
+        this.bridgeMarkerA = bridgeMarkerA;  // {x,y} of the approach marker tile in A
+        this.bridgeMarkerB = bridgeMarkerB;  // {x,y} of the approach marker tile in B
+        this.currentSection = 'A';
+        this.posX = 0; this.posY = 0;
+        this.heading = DIR_NORTH;
+    }
+
+    setPosition(x, y) { this.posX = x; this.posY = y; }
+    setHeading(h) { this.heading = h; }
+    setSection(s) { this.currentSection = s; }
+
+    readWalls() {
+        const truth = this.currentSection === 'A' ? this.truthA : this.truthB;
+        const cell = truth[this.posY][this.posX];
+        const front = this.heading;
+        const right = (this.heading + 1) % 4;
+        const left  = (this.heading + 3) % 4;
+        return {
+            wallFront: !!(cell & WALL_MASKS[front]),
+            wallLeft:  !!(cell & WALL_MASKS[left]),
+            wallRight: !!(cell & WALL_MASKS[right])
+        };
+    }
+
+    readFloorTile() {
+        if (this.currentSection === 'A') {
+            if (this.posX === this.startTile.x && this.posY === this.startTile.y) return TILE_WHITE;
+            if (this.posX === this.bridgeMarkerA.x && this.posY === this.bridgeMarkerA.y) return TILE_BRIDGE_MARKER;
+        } else {
+            if (this.posX === this.goalTile.x && this.posY === this.goalTile.y) return TILE_WHITE;
+            if (this.posX === this.bridgeMarkerB.x && this.posY === this.bridgeMarkerB.y) return TILE_BRIDGE_MARKER;
+        }
+        return TILE_NORMAL_BLACK;
+    }
+}
+
+// ========================================================================
+// MazeExplorer — 1:1 Port from C++
+// ========================================================================
+class MazeExplorer {
+    constructor(platform) {
+        this.platform = platform;
+        this.state = STATE_INIT;
+        this.heading = DIR_NORTH;
+
+        this.workGridA = Array.from({length: GRID_A_WORK_SIZE}, () => Array(GRID_A_WORK_SIZE).fill(0));
+        this.currA = { x: 3, y: 3 };
+        this.minA = { x: 3, y: 3 };
+        this.maxA = { x: 3, y: 3 };
+        this.bridgeRampA = { x: 0, y: 0 };
+
+        this.gridB = Array.from({length: MAZE_B_SIZE}, () => Array(MAZE_B_SIZE).fill(0));
+        this.currB = { x: 0, y: 0 };
+        this.bridgeExitB = { x: 0, y: 0 };
+        this.goalB = { x: 0, y: 0 };
+        this.goalFound = false;
+
+        this.dfsStack = [];
+        this.stepCount = 0;
+        this.log = [];
+
+        this.result = {
+            mazeA: Array.from({length: MAZE_A_SIZE}, () => Array(MAZE_A_SIZE).fill(0)),
+            mazeB: Array.from({length: MAZE_B_SIZE}, () => Array(MAZE_B_SIZE).fill(0)),
+            startA: { x: 0, y: 0 },
+            bridgeEntryA: { x: 0, y: 0 },
+            bridgeExitB: { x: 0, y: 0 },
+            goalB: { x: 0, y: 0 },
+            goalFound: false, completed: false
+        };
+    }
+
+    addLog(cls, text) {
+        this.log.push({ cls, text, step: this.stepCount });
+    }
+
+    begin(startX, startY) {
+        for (let y = 0; y < GRID_A_WORK_SIZE; y++)
+            for (let x = 0; x < GRID_A_WORK_SIZE; x++) this.workGridA[y][x] = 0;
+        for (let y = 0; y < MAZE_B_SIZE; y++)
+            for (let x = 0; x < MAZE_B_SIZE; x++) this.gridB[y][x] = 0;
+
+        this.currA = { x: 3, y: 3 };
+        this.minA = { x: 3, y: 3 };
+        this.maxA = { x: 3, y: 3 };
+        this.heading = DIR_NORTH;
+        this.dfsStack = [];
+        this.goalFound = false;
+        this.stepCount = 0;
+        this.log = [];
+
+        // Set simulated platform position to Section A start tile
+        this.platform.setSection('A');
+        this.platform.setPosition(startX, startY);
+        this.platform.setHeading(DIR_NORTH);
+
+        this.state = STATE_EXPLORE_A;
+        this.addLog('log-state', `Exploration started. Section A from (${startX},${startY}) heading ${DIR_NAMES[this.heading]}`);
+    }
+
+    getNeighbor(x, y, dir) {
+        return { x: x + DIR_DX[dir], y: y + DIR_DY[dir] };
+    }
+
+    isWithinBounds(x, y, inA) {
+        if (inA) {
+            if (x < 0 || x >= GRID_A_WORK_SIZE || y < 0 || y >= GRID_A_WORK_SIZE) return false;
+            const tMinX = Math.min(x, this.minA.x), tMaxX = Math.max(x, this.maxA.x);
+            const tMinY = Math.min(y, this.minA.y), tMaxY = Math.max(y, this.maxA.y);
+            return (tMaxX - tMinX + 1) <= MAZE_A_SIZE && (tMaxY - tMinY + 1) <= MAZE_A_SIZE;
+        }
+        return x >= 0 && x < MAZE_B_SIZE && y >= 0 && y < MAZE_B_SIZE;
+    }
+
+    hasWall(x, y, dir, inA) {
+        const cell = inA ? this.workGridA[y][x] : this.gridB[y][x];
+        return !!(cell & WALL_MASKS[dir]);
+    }
+
+    isVisited(x, y, inA) {
+        const cell = inA ? this.workGridA[y][x] : this.gridB[y][x];
+        return !!(cell & CELL_VISITED);
+    }
+
+    updateSymmetricWall(x, y, dir, inA) {
+        const n = this.getNeighbor(x, y, dir);
+        const opp = (dir + 2) % 4;
+        if (inA) {
+            if (n.x >= 0 && n.x < GRID_A_WORK_SIZE && n.y >= 0 && n.y < GRID_A_WORK_SIZE) {
+                this.workGridA[n.y][n.x] |= WALL_MASKS[opp];
+            }
+        } else {
+            if (n.x >= 0 && n.x < MAZE_B_SIZE && n.y >= 0 && n.y < MAZE_B_SIZE) {
+                this.gridB[n.y][n.x] |= WALL_MASKS[opp];
+            }
+        }
+    }
+
+    senseAndMap(inA) {
+        const cx = inA ? this.currA.x : this.currB.x;
+        const cy = inA ? this.currA.y : this.currB.y;
+
+        if (inA) {
+            this.workGridA[cy][cx] |= CELL_VISITED;
+            this.minA.x = Math.min(this.minA.x, cx);
+            this.maxA.x = Math.max(this.maxA.x, cx);
+            this.minA.y = Math.min(this.minA.y, cy);
+            this.maxA.y = Math.max(this.maxA.y, cy);
+        } else {
+            this.gridB[cy][cx] |= CELL_VISITED;
+        }
+
+        const ws = this.platform.readWalls();
+        const frontDir = this.heading;
+        const rightDir = (this.heading + 1) % 4;
+        const leftDir  = (this.heading + 3) % 4;
+
+        const wallDirs = [];
+        if (ws.wallFront) {
+            if (inA) this.workGridA[cy][cx] |= WALL_MASKS[frontDir]; else this.gridB[cy][cx] |= WALL_MASKS[frontDir];
+            this.updateSymmetricWall(cx, cy, frontDir, inA);
+            wallDirs.push(DIR_NAMES[frontDir]);
+        }
+        if (ws.wallRight) {
+            if (inA) this.workGridA[cy][cx] |= WALL_MASKS[rightDir]; else this.gridB[cy][cx] |= WALL_MASKS[rightDir];
+            this.updateSymmetricWall(cx, cy, rightDir, inA);
+            wallDirs.push(DIR_NAMES[rightDir]);
+        }
+        if (ws.wallLeft) {
+            if (inA) this.workGridA[cy][cx] |= WALL_MASKS[leftDir]; else this.gridB[cy][cx] |= WALL_MASKS[leftDir];
+            this.updateSymmetricWall(cx, cy, leftDir, inA);
+            wallDirs.push(DIR_NAMES[leftDir]);
+        }
+
+        // Boundary walls for Section A (bounding box limit)
+        if (inA) {
+            for (let d = 0; d < 4; d++) {
+                const n = this.getNeighbor(cx, cy, d);
+                if (!this.isWithinBounds(n.x, n.y, true)) {
+                    this.workGridA[cy][cx] |= WALL_MASKS[d];
+                }
+            }
+        }
+
+        if (wallDirs.length > 0) {
+            this.addLog('log-wall', `Walls: ${wallDirs.join(', ')} at (${cx},${cy})`);
+        }
+    }
+
+    turnToHeading(target) {
+        if (target === this.heading) return;
+        const diff = (target - this.heading + 4) % 4;
+        const turnNames = ['', 'Right 90°', 'U-Turn 180°', 'Left 90°'];
+        this.addLog('log-action', `Turn ${turnNames[diff]} → Heading ${DIR_NAMES[target]}`);
+        this.heading = target;
+        this.platform.setHeading(target);
+    }
+
+    getTurnDirection(fx, fy, tx, ty) {
+        if (ty > fy) return DIR_NORTH;
+        if (tx > fx) return DIR_EAST;
+        if (ty < fy) return DIR_SOUTH;
+        return DIR_WEST;
+    }
+
+    moveForward(inA) {
+        const cx = inA ? this.currA.x : this.currB.x;
+        const cy = inA ? this.currA.y : this.currB.y;
+        const n = this.getNeighbor(cx, cy, this.heading);
+        if (inA) {
+            this.currA.x = n.x; this.currA.y = n.y;
+        } else {
+            this.currB.x = n.x; this.currB.y = n.y;
+        }
+        // Update simulated platform position in truth coordinates
+        const truthN = this.getNeighbor(this.platform.posX, this.platform.posY, this.heading);
+        this.platform.setPosition(truthN.x, truthN.y);
+        return true;
+    }
+
+    stepDFS(inA) {
+        const cx = inA ? this.currA.x : this.currB.x;
+        const cy = inA ? this.currA.y : this.currB.y;
+
+        const checkOrder = [
+            this.heading,
+            (this.heading + 1) % 4,
+            (this.heading + 3) % 4,
+            (this.heading + 2) % 4
+        ];
+
+        for (const dir of checkOrder) {
+            if (!this.hasWall(cx, cy, dir, inA)) {
+                const n = this.getNeighbor(cx, cy, dir);
+                if (this.isWithinBounds(n.x, n.y, inA) && !this.isVisited(n.x, n.y, inA)) {
+                    this.dfsStack.push({ x: cx, y: cy });
+                    this.turnToHeading(dir);
+                    this.moveForward(inA);
+                    const nc = inA ? this.currA : this.currB;
+                    this.addLog('log-action', `Move → (${nc.x},${nc.y})`);
+                    return true;
+                }
+            }
+        }
+
+        // Backtrack
+        if (this.dfsStack.length === 0) return false;
+        const prev = this.dfsStack.pop();
+        const backDir = this.getTurnDirection(cx, cy, prev.x, prev.y);
+        this.turnToHeading(backDir);
+        this.moveForward(inA);
+        this.addLog('log-action', `Backtrack → (${prev.x},${prev.y})`);
+        return true;
+    }
+
+    normalizeSectionA() {
+        const offX = this.minA.x, offY = this.minA.y;
+        for (let y = 0; y < MAZE_A_SIZE; y++) {
+            for (let x = 0; x < MAZE_A_SIZE; x++) {
+                const wx = x + offX, wy = y + offY;
+                if (wx >= 0 && wx < GRID_A_WORK_SIZE && wy >= 0 && wy < GRID_A_WORK_SIZE) {
+                    this.result.mazeA[y][x] = this.workGridA[wy][wx];
+                } else {
+                    this.result.mazeA[y][x] = 0x0F;
+                }
+            }
+        }
+        this.result.startA = { x: 3 - offX, y: 3 - offY };
+        this.result.bridgeEntryA = { x: this.bridgeRampA.x - offX, y: this.bridgeRampA.y - offY };
+    }
+
+    loopStep() {
+        this.stepCount++;
+
+        switch (this.state) {
+            case STATE_EXPLORE_A: {
+                this.senseAndMap(true);
+                const tile = this.platform.readFloorTile();
+                if (tile === TILE_BRIDGE_MARKER) {
+                    const ramp = this.getNeighbor(this.currA.x, this.currA.y, this.heading);
+                    this.bridgeRampA = { x: ramp.x, y: ramp.y };
+                    this.addLog('log-state', `Bridge marker detected at (${this.currA.x},${this.currA.y})!`);
+                    this.state = STATE_APPROACH_BRIDGE;
+                    return true;
+                }
+                const canContinue = this.stepDFS(true);
+                if (!canContinue) {
+                    this.addLog('log-state', 'Section A fully explored');
+                    this.state = STATE_APPROACH_BRIDGE;
+                }
+                return true;
+            }
+
+            case STATE_APPROACH_BRIDGE: {
+                // Drive forward onto bridge ramp
+                this.moveForward(true);
+                this.normalizeSectionA();
+                this.addLog('log-state', 'Entering bridge. Line follow engaged.');
+                this.state = STATE_CROSSING_BRIDGE;
+                return true;
+            }
+
+            case STATE_CROSSING_BRIDGE: {
+                // Simulate line follow across bridge (instant in simulation)
+                this.addLog('log-state', 'Bridge crossed successfully.');
+                this.state = STATE_ENTER_B;
+                return true;
+            }
+
+            case STATE_ENTER_B: {
+                // Configure Section B entry
+                this.platform.setSection('B');
+                const entryCoords = getCornerCoords(
+                    document.getElementById('bridgeCornerB').value, MAZE_B_SIZE
+                );
+                this.platform.setPosition(entryCoords.x, entryCoords.y);
+                this.currB = { x: 0, y: 0 };
+                this.heading = DIR_NORTH;
+                this.platform.setHeading(DIR_NORTH);
+                this.bridgeExitB = { x: 0, y: 0 };
+                this.result.bridgeExitB = { x: 0, y: 0 };
+                this.dfsStack = [];
+                this.addLog('log-state', `Entered Section B at truth (${entryCoords.x},${entryCoords.y}), relative (0,0)`);
+                this.state = STATE_EXPLORE_B;
+                return true;
+            }
+
+            case STATE_EXPLORE_B: {
+                this.senseAndMap(false);
+                const tile = this.platform.readFloorTile();
+                if (tile === TILE_WHITE) {
+                    this.goalB = { x: this.currB.x, y: this.currB.y };
+                    this.goalFound = true;
+                    this.result.goalB = { ...this.goalB };
+                    this.result.goalFound = true;
+                    this.result.completed = true;
+                    for (let y = 0; y < MAZE_B_SIZE; y++)
+                        for (let x = 0; x < MAZE_B_SIZE; x++)
+                            this.result.mazeB[y][x] = this.gridB[y][x];
+                    this.addLog('log-goal', `GOAL FOUND at (${this.currB.x},${this.currB.y})! Exploration complete.`);
+                    this.state = STATE_COMPLETED;
+                    return false;
+                }
+                const canContinue = this.stepDFS(false);
+                if (!canContinue) {
+                    for (let y = 0; y < MAZE_B_SIZE; y++)
+                        for (let x = 0; x < MAZE_B_SIZE; x++)
+                            this.result.mazeB[y][x] = this.gridB[y][x];
+                    this.result.completed = this.goalFound;
+                    this.state = this.goalFound ? STATE_COMPLETED : STATE_FAILED;
+                    this.addLog(this.goalFound ? 'log-goal' : 'log-state',
+                        this.goalFound ? 'All cells explored. Goal was found.' : 'All cells explored. Goal NOT found!');
+                    return false;
+                }
+                return true;
+            }
+
+            case STATE_COMPLETED:
+            case STATE_FAILED:
+            default:
+                return false;
+        }
+    }
+}
+
+// ========================================================================
+// Helper: Get corner coordinates
+// ========================================================================
+function getCornerCoords(corner, size) {
+    switch(corner) {
+        case 'topLeft':     return { x: 0, y: size - 1 };
+        case 'topRight':    return { x: size - 1, y: size - 1 };
+        case 'bottomLeft':  return { x: 0, y: 0 };
+        case 'bottomRight': return { x: size - 1, y: 0 };
+    }
+    return { x: 0, y: 0 };
+}
+
+// Get neighbor of bridge corner (the approach marker tile)
+function getBridgeMarkerTile(corner, size) {
+    const c = getCornerCoords(corner, size);
+    // The marker tile is the cell adjacent to the corner, toward the maze interior
+    // We just pick one valid interior neighbor
+    if (c.x === 0 && c.y === size - 1) return { x: 1, y: size - 1 };  // topLeft -> right neighbor
+    if (c.x === size - 1 && c.y === size - 1) return { x: size - 2, y: size - 1 }; // topRight -> left
+    if (c.x === 0 && c.y === 0) return { x: 1, y: 0 }; // bottomLeft -> right
+    if (c.x === size - 1 && c.y === 0) return { x: size - 2, y: 0 }; // bottomRight -> left
+    return { x: 1, y: 0 };
+}
+
+// Ensure the bridge corner tile has an opening toward the bridge
+function openBridgeWall(walls, corner, size) {
+    const c = getCornerCoords(corner, size);
+    const marker = getBridgeMarkerTile(corner, size);
+
+    // Determine which direction the bridge exits (outward from the corner)
+    // Open the corner cell's wall that faces outward
+    if (c.x === 0) { walls[c.y][c.x] &= ~WALL_WEST; }
+    if (c.x === size - 1) { walls[c.y][c.x] &= ~WALL_EAST; }
+    if (c.y === 0) { walls[c.y][c.x] &= ~WALL_SOUTH; }
+    if (c.y === size - 1) { walls[c.y][c.x] &= ~WALL_NORTH; }
+
+    // Ensure the path from marker to bridge corner is open
+    const dirToCorner = (() => {
+        if (c.x > marker.x) return DIR_EAST;
+        if (c.x < marker.x) return DIR_WEST;
+        if (c.y > marker.y) return DIR_NORTH;
+        return DIR_SOUTH;
+    })();
+    walls[marker.y][marker.x] &= ~WALL_MASKS[dirToCorner];
+    walls[c.y][c.x] &= ~WALL_MASKS[(dirToCorner + 2) % 4];
+}
+
+// ========================================================================
+// Renderer
+// ========================================================================
+function drawMaze(canvas, truthWalls, mappedGrid, size, robotPos, robotHeading, 
+                  startTile, goalTile, bridgeMarkerTile, bridgeCorner, isActiveSection,
+                  coordOffset) {
+    const ctx = canvas.getContext('2d');
+    const padding = 24;
+    const cellSize = (canvas.width - 2 * padding) / size;
+    const wallWidth = 3;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw cells
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            // Flip Y for display (row 0 at bottom)
+            const dispY = size - 1 - y;
+            const px = padding + x * cellSize;
+            const py = padding + dispY * cellSize;
+
+            // Cell background
+            let bg = 'var(--cell-unvisited)';
+            const mappedX = x + (coordOffset ? coordOffset.x : 0);
+            const mappedY = y + (coordOffset ? coordOffset.y : 0);
+            let cellVal = 0;
+
+            if (mappedGrid && coordOffset) {
+                if (mappedX >= 0 && mappedX < mappedGrid[0].length && mappedY >= 0 && mappedY < mappedGrid.length) {
+                    cellVal = mappedGrid[mappedY][mappedX];
+                }
+            } else if (mappedGrid) {
+                cellVal = mappedGrid[y][x];
+            }
+
+            if (cellVal & CELL_VISITED) bg = 'var(--cell-visited)';
+            if (startTile && x === startTile.x && y === startTile.y) bg = 'var(--cell-start)';
+            if (goalTile && x === goalTile.x && y === goalTile.y) bg = 'var(--cell-goal)';
+            if (bridgeMarkerTile && x === bridgeMarkerTile.x && y === bridgeMarkerTile.y) bg = 'var(--cell-bridge-marker)';
+
+            ctx.fillStyle = bg;
+            ctx.fillRect(px + 1, py + 1, cellSize - 2, cellSize - 2);
+
+            // Coordinate labels
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.font = `${Math.max(8, cellSize * 0.18)}px 'JetBrains Mono'`;
+            ctx.textAlign = 'center';
+            ctx.fillText(`${x},${y}`, px + cellSize / 2, py + cellSize - 4);
+
+            // Truth walls (dimmed)
+            const tw = truthWalls[y][x];
+            ctx.strokeStyle = 'rgba(226,232,240,0.15)';
+            ctx.lineWidth = 1;
+            if (tw & WALL_NORTH) { ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + cellSize, py); ctx.stroke(); }
+            if (tw & WALL_SOUTH) { ctx.beginPath(); ctx.moveTo(px, py + cellSize); ctx.lineTo(px + cellSize, py + cellSize); ctx.stroke(); }
+            if (tw & WALL_EAST)  { ctx.beginPath(); ctx.moveTo(px + cellSize, py); ctx.lineTo(px + cellSize, py + cellSize); ctx.stroke(); }
+            if (tw & WALL_WEST)  { ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py + cellSize); ctx.stroke(); }
+
+            // Mapped walls (bright)
+            if (cellVal & CELL_VISITED) {
+                ctx.strokeStyle = 'var(--wall-color)';
+                ctx.lineWidth = wallWidth;
+                ctx.lineCap = 'round';
+                if (cellVal & WALL_NORTH) { ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + cellSize, py); ctx.stroke(); }
+                if (cellVal & WALL_SOUTH) { ctx.beginPath(); ctx.moveTo(px, py + cellSize); ctx.lineTo(px + cellSize, py + cellSize); ctx.stroke(); }
+                if (cellVal & WALL_EAST)  { ctx.beginPath(); ctx.moveTo(px + cellSize, py); ctx.lineTo(px + cellSize, py + cellSize); ctx.stroke(); }
+                if (cellVal & WALL_WEST)  { ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py + cellSize); ctx.stroke(); }
+            }
+        }
+    }
+
+    // Bridge corner indicator
+    if (bridgeCorner) {
+        const bc = getCornerCoords(bridgeCorner, size);
+        const dispY = size - 1 - bc.y;
+        const px = padding + bc.x * cellSize;
+        const py = padding + dispY * cellSize;
+        ctx.strokeStyle = 'var(--accent-pink)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(px + 2, py + 2, cellSize - 4, cellSize - 4);
+        ctx.setLineDash([]);
+    }
+
+    // Robot
+    if (robotPos && isActiveSection) {
+        const dispY = size - 1 - robotPos.y;
+        const rx = padding + robotPos.x * cellSize + cellSize / 2;
+        const ry = padding + dispY * cellSize + cellSize / 2;
+        const r = cellSize * 0.3;
+
+        // Glow
+        const glow = ctx.createRadialGradient(rx, ry, 0, rx, ry, r * 2);
+        glow.addColorStop(0, 'rgba(16,185,129,0.3)');
+        glow.addColorStop(1, 'rgba(16,185,129,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(rx - r * 2, ry - r * 2, r * 4, r * 4);
+
+        // Body
+        ctx.fillStyle = 'var(--accent-green)';
+        ctx.beginPath();
+        ctx.arc(rx, ry, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Direction arrow
+        const angles = [-Math.PI/2, 0, Math.PI/2, Math.PI]; // N, E, S, W
+        const angle = angles[robotHeading];
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(rx + Math.cos(angle) * r * 1.1, ry + Math.sin(angle) * r * 1.1);
+        ctx.lineTo(rx + Math.cos(angle + 2.5) * r * 0.5, ry + Math.sin(angle + 2.5) * r * 0.5);
+        ctx.lineTo(rx + Math.cos(angle - 2.5) * r * 0.5, ry + Math.sin(angle - 2.5) * r * 0.5);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // Start / Goal labels
+    if (startTile) {
+        const dispY = size - 1 - startTile.y;
+        ctx.fillStyle = 'var(--accent-purple)';
+        ctx.font = `bold ${Math.max(10, cellSize * 0.24)}px Inter`;
+        ctx.textAlign = 'center';
+        ctx.fillText('S', padding + startTile.x * cellSize + cellSize / 2, padding + dispY * cellSize + cellSize / 2 + 4);
+    }
+    if (goalTile) {
+        const dispY = size - 1 - goalTile.y;
+        ctx.fillStyle = 'var(--accent-orange)';
+        ctx.font = `bold ${Math.max(10, cellSize * 0.24)}px Inter`;
+        ctx.textAlign = 'center';
+        ctx.fillText('G', padding + goalTile.x * cellSize + cellSize / 2, padding + dispY * cellSize + cellSize / 2 + 4);
+    }
+}
+
+// ========================================================================
+// Wall Map Table Renderer
+// ========================================================================
+function renderWallMapTable(explorer) {
+    const container = document.getElementById('wallmapContainer');
+    let html = '';
+
+    // Section A mapped data
+    const inA = (explorer.state <= STATE_APPROACH_BRIDGE);
+    if (inA || explorer.state >= STATE_ENTER_B) {
+        html += `<div style="font-size:10px;color:var(--accent-blue);margin-bottom:4px;font-weight:600">Section A (Work Grid → Normalized)</div>`;
+        html += `<table class="wallmap-table"><tr><th></th>`;
+        for (let x = 0; x < MAZE_A_SIZE; x++) html += `<th>${x}</th>`;
+        html += `</tr>`;
+        for (let y = MAZE_A_SIZE - 1; y >= 0; y--) {
+            html += `<tr><th>${y}</th>`;
+            for (let x = 0; x < MAZE_A_SIZE; x++) {
+                const val = explorer.result.mazeA[y][x];
+                const cls = (val & CELL_VISITED) ? 'visited' : '';
+                html += `<td class="${cls}">0x${val.toString(16).padStart(2, '0').toUpperCase()}</td>`;
+            }
+            html += `</tr>`;
+        }
+        html += `</table>`;
+    }
+
+    if (explorer.state >= STATE_EXPLORE_B) {
+        html += `<div style="font-size:10px;color:var(--accent-purple);margin:8px 0 4px;font-weight:600">Section B (Robot's Map)</div>`;
+        html += `<table class="wallmap-table"><tr><th></th>`;
+        for (let x = 0; x < MAZE_B_SIZE; x++) html += `<th>${x}</th>`;
+        html += `</tr>`;
+        for (let y = MAZE_B_SIZE - 1; y >= 0; y--) {
+            html += `<tr><th>${y}</th>`;
+            for (let x = 0; x < MAZE_B_SIZE; x++) {
+                const val = explorer.gridB[y][x];
+                const isCurr = (explorer.currB.x === x && explorer.currB.y === y && explorer.state === STATE_EXPLORE_B);
+                const cls = isCurr ? 'current' : (val & CELL_VISITED) ? 'visited' : '';
+                html += `<td class="${cls}">0x${val.toString(16).padStart(2, '0').toUpperCase()}</td>`;
+            }
+            html += `</tr>`;
+        }
+        html += `</table>`;
+    }
+
+    container.innerHTML = html || '<em style="font-size:11px;color:var(--text-muted)">Run simulation to see mapped data</em>';
+}
+
+// ========================================================================
+// Log Renderer
+// ========================================================================
+function renderLog(explorer) {
+    const el = document.getElementById('logScroll');
+    let html = '';
+    // Show last 100 entries
+    const entries = explorer.log.slice(-100);
+    for (const e of entries) {
+        html += `<div class="log-entry"><span class="log-step">[${e.step}]</span> <span class="${e.cls}">${e.text}</span></div>`;
+    }
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+}
+
+// ========================================================================
+// Stats Updater
+// ========================================================================
+function updateStats(explorer) {
+    document.getElementById('statSteps').textContent = explorer.stepCount;
+    document.getElementById('statHeading').textContent = DIR_NAMES[explorer.heading];
+    document.getElementById('statStack').textContent = explorer.dfsStack.length;
+
+    // Count visited in A
+    let vA = 0;
+    for (let y = 0; y < GRID_A_WORK_SIZE; y++)
+        for (let x = 0; x < GRID_A_WORK_SIZE; x++)
+            if (explorer.workGridA[y][x] & CELL_VISITED) vA++;
+    document.getElementById('statVisitedA').textContent = `${vA}/${MAZE_A_SIZE * MAZE_A_SIZE}`;
+
+    let vB = 0;
+    for (let y = 0; y < MAZE_B_SIZE; y++)
+        for (let x = 0; x < MAZE_B_SIZE; x++)
+            if (explorer.gridB[y][x] & CELL_VISITED) vB++;
+    document.getElementById('statVisitedB').textContent = `${vB}/${MAZE_B_SIZE * MAZE_B_SIZE}`;
+
+    const inA = (explorer.state <= STATE_APPROACH_BRIDGE);
+    const pos = inA ? explorer.currA : explorer.currB;
+    const sec = inA ? 'A' : 'B';
+    document.getElementById('statPos').textContent = `${sec}(${pos.x},${pos.y})`;
+
+    document.getElementById('stepCounter').textContent = `Step: ${explorer.stepCount}`;
+
+    // State badge
+    const badge = document.getElementById('stateBadge');
+    badge.textContent = STATE_NAMES[explorer.state];
+    badge.className = 'state-badge';
+    if (explorer.state === STATE_EXPLORE_A) badge.classList.add('exploring-a');
+    else if (explorer.state >= STATE_APPROACH_BRIDGE && explorer.state <= STATE_ENTER_B) badge.classList.add('bridge');
+    else if (explorer.state === STATE_EXPLORE_B) badge.classList.add('exploring-b');
+    else if (explorer.state === STATE_COMPLETED) badge.classList.add('completed');
+    else if (explorer.state === STATE_FAILED) badge.classList.add('failed');
+}
+
+// ========================================================================
+// Main Application Controller
+// ========================================================================
+let truthMazeA = null, truthMazeB = null;
+let explorer = null;
+let animTimer = null;
+let isRunning = false;
+
+function initMazes() {
+    const seed = parseInt(document.getElementById('mazeSeed').value) || 42;
+    const bridgeCornerA = document.getElementById('bridgeCornerA').value;
+    const bridgeCornerB = document.getElementById('bridgeCornerB').value;
+
+    truthMazeA = generateMaze(MAZE_A_SIZE, MAZE_A_SIZE, seed);
+    truthMazeB = generateMaze(MAZE_B_SIZE, MAZE_B_SIZE, seed + 1000);
+
+    // Open bridge walls
+    openBridgeWall(truthMazeA, bridgeCornerA, MAZE_A_SIZE);
+    openBridgeWall(truthMazeB, bridgeCornerB, MAZE_B_SIZE);
+}
+
+function getConfig() {
+    return {
+        startA: { x: parseInt(document.getElementById('startAx').value) || 0, y: parseInt(document.getElementById('startAy').value) || 0 },
+        goalB: { x: parseInt(document.getElementById('goalBx').value) || 4, y: parseInt(document.getElementById('goalBy').value) || 4 },
+        bridgeCornerA: document.getElementById('bridgeCornerA').value,
+        bridgeCornerB: document.getElementById('bridgeCornerB').value,
+    };
+}
+
+function fullRedraw() {
+    const cfg = getConfig();
+    const bridgeMarkerA = getBridgeMarkerTile(cfg.bridgeCornerA, MAZE_A_SIZE);
+    const bridgeMarkerB = getBridgeMarkerTile(cfg.bridgeCornerB, MAZE_B_SIZE);
+
+    const inA = !explorer || explorer.state <= STATE_APPROACH_BRIDGE || explorer.state === STATE_CROSSING_BRIDGE;
+    const inB = explorer && explorer.state >= STATE_ENTER_B;
+
+    // Robot truth coordinates for drawing
+    let robotPosA = null, robotPosB = null;
+    if (explorer) {
+        if (explorer.platform.currentSection === 'A') {
+            robotPosA = { x: explorer.platform.posX, y: explorer.platform.posY };
+        } else {
+            robotPosB = { x: explorer.platform.posX, y: explorer.platform.posY };
+        }
+    }
+
+    // Section A canvas
+    const coordOffsetA = explorer ? { x: explorer.minA.x, y: explorer.minA.y } : null;
+    drawMaze(
+        document.getElementById('canvasA'), truthMazeA,
+        explorer ? explorer.workGridA : null, MAZE_A_SIZE,
+        robotPosA, explorer ? explorer.heading : DIR_NORTH,
+        cfg.startA, null, bridgeMarkerA, cfg.bridgeCornerA,
+        inA && !inB, coordOffsetA
+    );
+
+    // Section B canvas
+    drawMaze(
+        document.getElementById('canvasB'), truthMazeB,
+        explorer ? explorer.gridB : null, MAZE_B_SIZE,
+        robotPosB, explorer ? explorer.heading : DIR_NORTH,
+        null, cfg.goalB, bridgeMarkerB, cfg.bridgeCornerB,
+        inB, null
+    );
+
+    if (explorer) {
+        updateStats(explorer);
+        renderLog(explorer);
+        renderWallMapTable(explorer);
+    }
+}
+
+function reset() {
+    if (animTimer) { clearInterval(animTimer); animTimer = null; }
+    isRunning = false;
+    explorer = null;
+
+    initMazes();
+    document.getElementById('statSteps').textContent = '0';
+    document.getElementById('statHeading').textContent = 'N';
+    document.getElementById('statVisitedA').textContent = '0/16';
+    document.getElementById('statVisitedB').textContent = '0/81';
+    document.getElementById('statPos').textContent = '(0,0)';
+    document.getElementById('statStack').textContent = '0';
+    document.getElementById('stepCounter').textContent = 'Step: 0';
+    document.getElementById('stateBadge').textContent = 'IDLE';
+    document.getElementById('stateBadge').className = 'state-badge';
+    document.getElementById('logScroll').innerHTML = '';
+    document.getElementById('wallmapContainer').innerHTML = '<em style="font-size:11px;color:var(--text-muted)">Run simulation to see mapped data</em>';
+
+    document.getElementById('btnRun').disabled = false;
+    document.getElementById('btnStep').disabled = true;
+    document.getElementById('btnRun').textContent = '▶ Run';
+
+    fullRedraw();
+}
+
+function startExplorer() {
+    if (!explorer) {
+        const cfg = getConfig();
+        const bridgeMarkerA = getBridgeMarkerTile(cfg.bridgeCornerA, MAZE_A_SIZE);
+        const bridgeMarkerB = getBridgeMarkerTile(cfg.bridgeCornerB, MAZE_B_SIZE);
+
+        const platform = new SimulatedPlatform(
+            truthMazeA, truthMazeB,
+            cfg.startA, cfg.goalB,
+            bridgeMarkerA, bridgeMarkerB
+        );
+        explorer = new MazeExplorer(platform);
+        explorer.begin(cfg.startA.x, cfg.startA.y);
+    }
+}
+
+function doOneStep() {
+    if (!explorer) startExplorer();
+    const cont = explorer.loopStep();
+    fullRedraw();
+    if (!cont) {
+        if (animTimer) { clearInterval(animTimer); animTimer = null; }
+        isRunning = false;
+        document.getElementById('btnRun').textContent = '▶ Run';
+        document.getElementById('btnRun').disabled = true;
+        document.getElementById('btnStep').disabled = true;
+    }
+    return cont;
+}
+
+document.getElementById('btnRun').addEventListener('click', () => {
+    if (isRunning) {
+        // Pause
+        clearInterval(animTimer); animTimer = null;
+        isRunning = false;
+        document.getElementById('btnRun').textContent = '▶ Run';
+        document.getElementById('btnStep').disabled = false;
+        return;
+    }
+
+    if (!explorer) startExplorer();
+    isRunning = true;
+    document.getElementById('btnRun').textContent = '⏸ Pause';
+    document.getElementById('btnStep').disabled = true;
+
+    const speed = parseInt(document.getElementById('speedSlider').value);
+    const delay = Math.max(10, 1000 - speed * 10);
+    animTimer = setInterval(() => {
+        if (!doOneStep()) {
+            clearInterval(animTimer); animTimer = null;
+            isRunning = false;
+        }
+    }, delay);
+});
+
+document.getElementById('btnStep').addEventListener('click', () => {
+    if (isRunning) return;
+    document.getElementById('btnStep').disabled = false;
+    doOneStep();
+});
+
+document.getElementById('btnReset').addEventListener('click', reset);
+
+document.getElementById('speedSlider').addEventListener('input', (e) => {
+    document.getElementById('speedVal').textContent = e.target.value;
+    if (isRunning && animTimer) {
+        clearInterval(animTimer);
+        const speed = parseInt(e.target.value);
+        const delay = Math.max(10, 1000 - speed * 10);
+        animTimer = setInterval(() => {
+            if (!doOneStep()) {
+                clearInterval(animTimer); animTimer = null;
+                isRunning = false;
+            }
+        }, delay);
+    }
+});
+
+// Enable step button after first reset
+document.getElementById('btnReset').addEventListener('click', () => {
+    setTimeout(() => { document.getElementById('btnStep').disabled = false; }, 50);
+});
+
+// Initial draw
+reset();
+</script>
+</body>
+</html>
