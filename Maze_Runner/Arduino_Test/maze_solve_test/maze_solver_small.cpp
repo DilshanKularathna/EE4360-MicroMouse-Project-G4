@@ -2,7 +2,8 @@
 #include <util/atomic.h>
 #include "config.h"
 #include "Ultrasonic.h"
-#include "motorDriver.h"
+#include "MotorDriver.h"
+#include "globals.h"
 
 // ================================================================
 // CONSTANTS
