@@ -3,7 +3,7 @@
 #include "config.h"
 #include "MotorDriver.h"
 #include "Ultrasonic.h"
-#include "globals.h"
+
 
 // // Global pulse counters required for ISR access
 volatile long leftEncoderCount  = 0;

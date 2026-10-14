@@ -3,17 +3,20 @@
 
 #include <Arduino.h>
 
-// void setMotors(int leftSpeed, int rightSpeed);
-// void stopMotors();
+extern volatile long leftEncoderCount;
+extern volatile long rightEncoderCount;
+
+extern float frontDistance;
+extern float leftDistance;
+extern float rightDistance;
+extern bool isMovingForward; // MovedistanceCM() in MotorDriver.cpp
+extern bool isTurning;
+extern float lastError;
+extern float integralError;
 
 // float readUltrasonic(int trig, int echo);
 // void  readAllSensors();
 
-// void leftEncoderISR();
-// void rightEncoderISR();
-// void resetEncoders();
-// void moveDistanceCM(float distanceCM, int speed);
-// void turnDegrees(float degrees, int speed);
 void turnLeft();
 void turnRight();
 void turnAround();
