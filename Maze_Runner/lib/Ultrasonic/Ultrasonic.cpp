@@ -43,6 +43,30 @@ bool isWallOnLeft() {
     return leftDist <= WALL_THRESHOLD;
 }
 
+float calibrateDistance(float rawDist, int trigPin) {
+    if (rawDist >= 100.0f) {
+        return 100.0f; // Keep out-of-range / clear path indicator unchanged
+    }
+
+    float calibrated = rawDist;
+    switch (trigPin) {
+        case PIN_ULTRA_FRONT_TRIG:
+            calibrated = (rawDist * ULTRA_FRONT_SCALE) + ULTRA_FRONT_OFFSET;
+            break;
+        case PIN_ULTRA_LEFT_TRIG:
+            calibrated = (rawDist * ULTRA_LEFT_SCALE) + ULTRA_LEFT_OFFSET;
+            break;
+        case PIN_ULTRA_RIGHT_TRIG:
+            calibrated = (rawDist * ULTRA_RIGHT_SCALE) + ULTRA_RIGHT_OFFSET;
+            break;
+        default:
+            break;
+    }
+
+    // Prevent negative readings
+    return (calibrated < 0.0f) ? 0.0f : calibrated;
+}
+
 float readUltrasonic(int trigPin, int echoPin) {
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
@@ -52,7 +76,8 @@ float readUltrasonic(int trigPin, int echoPin) {
     long duration = pulseIn(echoPin, HIGH, 9000);
     if (duration == 0)
         return 100.0f; // Path is clear
-    return (duration * 0.0343f) / 2.0f;
+    float rawDist = (duration * 0.0343f) / 2.0f;
+    return calibrateDistance(rawDist, trigPin);
 }
 
 void readAllSensors() {

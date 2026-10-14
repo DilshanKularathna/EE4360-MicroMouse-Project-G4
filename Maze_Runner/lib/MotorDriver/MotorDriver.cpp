@@ -172,6 +172,7 @@ void rightEncoderISR() {
 }
 
 // Dont change, Bare Metal for PWM Generation
+/*
 void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle) {
     if (freq == 0) return;
     if (dutyCycle > 100) dutyCycle = 100;
@@ -252,4 +253,19 @@ void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle) {
             }
         }
     }
+}
+*/
+
+// Arduino-native replacement for setPWM
+void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle) {
+    // 1. Constrain to match the original function's safety check
+    if (dutyCycle > 100) {
+        dutyCycle = 100;
+    }
+
+    // 2. Map the 0-100% duty cycle to Arduino's 0-255 scale
+    int mappedPWM = map(dutyCycle, 0, 100, 0, 255);
+
+    // 3. Write the PWM value using standard Arduino functions
+    analogWrite(pin, mappedPWM);
 }
