@@ -5,3 +5,6 @@ Maze_Runner/.vscode/launch.json
 Maze_Runner/.vscode/ipch
 .claude/
 CLAUDE.md
+# Native test executables
+*.exe
+
