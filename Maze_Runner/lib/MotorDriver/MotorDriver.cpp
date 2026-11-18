@@ -43,39 +43,86 @@ void turnAround() {
     currentHeading = (currentHeading + 2) % 4;
 }
 
+// void turnDegrees(float degrees) { // + value turns right, - value turns left
+//     resetEncoders();
+
+//     const float turnMagnitude = fabs(degrees);
+//     const float turnRatio = turnMagnitude / 90.0f;
+//     float targetCountsFloat;
+//     if (turnRatio <= 1.0f) {
+//         targetCountsFloat = TICKS_PER_90_DEG * turnRatio;
+//     } else {
+//         // Interpolate between the measured 90-degree and 180-degree values.
+//         targetCountsFloat = TICKS_PER_90_DEG +
+//             (TICKS_PER_180_DEG - TICKS_PER_90_DEG) * (turnRatio - 1.0f);
+//     }
+//     const long targetCounts = (long)(targetCountsFloat + 0.5f);
+
+//     long lCount = 0;
+//     long rCount = 0;
+
+//     while (abs(lCount) < targetCounts || abs(rCount) < targetCounts) {
+//         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+//             lCount = leftEncoderCount;
+//             rCount = rightEncoderCount;
+//         }
+
+//         if (degrees > 0) {
+//             setPWM(PIN_LEFT_RPWM, 20000, TURN_SPEED);
+//             setPWM(PIN_LEFT_LPWM, 20000, 0);
+//             setPWM(PIN_RIGHT_RPWM, 20000, 0);
+//             setPWM(PIN_RIGHT_LPWM, 20000, TURN_SPEED);
+//         } else {
+//             setPWM(PIN_LEFT_RPWM, 20000, 0);
+//             setPWM(PIN_LEFT_LPWM, 20000, TURN_SPEED);
+//             setPWM(PIN_RIGHT_RPWM, 20000, TURN_SPEED);
+//             setPWM(PIN_RIGHT_LPWM, 20000, 0);
+//         }
+//     }
+//     stopMotors();
+//     delay(500);
+// }
+
 void turnDegrees(float degrees) { // + value turns right, - value turns left
     resetEncoders();
-
+ 
     const float turnMagnitude = fabs(degrees);
     const float turnRatio = turnMagnitude / 90.0f;
     float targetCountsFloat;
     if (turnRatio <= 1.0f) {
         targetCountsFloat = TICKS_PER_90_DEG * turnRatio;
     } else {
-        // Interpolate between the measured 90-degree and 180-degree values.
         targetCountsFloat = TICKS_PER_90_DEG +
             (TICKS_PER_180_DEG - TICKS_PER_90_DEG) * (turnRatio - 1.0f);
     }
     const long targetCounts = (long)(targetCountsFloat + 0.5f);
-
+ 
     long lCount = 0;
     long rCount = 0;
-
-    while (abs(lCount) < targetCounts || abs(rCount) < targetCounts) {
+    const unsigned long startMs = millis();
+ 
+    while (millis() - startMs < 3000) {
         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             lCount = leftEncoderCount;
             rCount = rightEncoderCount;
         }
-
-        if (degrees > 0) {
-            setPWM(PIN_LEFT_RPWM, 20000, TURN_SPEED);
-            setPWM(PIN_LEFT_LPWM, 20000, 0);
+ 
+        const bool lDone = abs(lCount) >= targetCounts;
+        const bool rDone = abs(rCount) >= targetCounts;
+        if (lDone && rDone) break;
+ 
+        const uint8_t lDuty = lDone ? 0 : TURN_SPEED;
+        const uint8_t rDuty = rDone ? 0 : TURN_SPEED;
+ 
+        if (degrees > 0) {          // turn right: left wheel forward, right wheel back
+            setPWM(PIN_LEFT_RPWM,  20000, lDuty);
+            setPWM(PIN_LEFT_LPWM,  20000, 0);
             setPWM(PIN_RIGHT_RPWM, 20000, 0);
-            setPWM(PIN_RIGHT_LPWM, 20000, TURN_SPEED);
-        } else {
-            setPWM(PIN_LEFT_RPWM, 20000, 0);
-            setPWM(PIN_LEFT_LPWM, 20000, TURN_SPEED);
-            setPWM(PIN_RIGHT_RPWM, 20000, TURN_SPEED);
+            setPWM(PIN_RIGHT_LPWM, 20000, rDuty);
+        } else {                    // turn left: left wheel back, right wheel forward
+            setPWM(PIN_LEFT_RPWM,  20000, 0);
+            setPWM(PIN_LEFT_LPWM,  20000, lDuty);
+            setPWM(PIN_RIGHT_RPWM, 20000, rDuty);
             setPWM(PIN_RIGHT_LPWM, 20000, 0);
         }
     }

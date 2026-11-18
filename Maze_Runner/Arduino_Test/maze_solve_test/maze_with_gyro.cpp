@@ -13,41 +13,6 @@
 // ================================================================
 const long TARGET_TICKS_FWD = (long)(TICKS_PER_CELL_25CM + 0.5f);
 
-// Geometry used by the in-maze turn-clearance diagnostic. These are measured
-// from the drive-axle midpoint to the farthest chassis end and across the body.
-float getTurnSweepRadiusCm() {
-    const float halfWidth = TURN_CHASSIS_WIDTH_CM * 0.5f;
-    return sqrtf(
-        TURN_AXLE_TO_FARTHEST_END_CM * TURN_AXLE_TO_FARTHEST_END_CM +
-        halfWidth * halfWidth);
-}
-
-void printTurnSweepGeometry() {
-    const float sweepRadiusCm = getTurnSweepRadiusCm();
-    Serial.println(F("=== Turn clearance geometry ==="));
-    Serial.print(F("Axle to farthest chassis end: "));
-    Serial.print(TURN_AXLE_TO_FARTHEST_END_CM, 1);
-    Serial.println(F(" cm"));
-    Serial.print(F("Chassis width: "));
-    Serial.print(TURN_CHASSIS_WIDTH_CM, 1);
-    Serial.println(F(" cm"));
-    Serial.print(F("Estimated sweep radius: "));
-    Serial.print(sweepRadiusCm, 2);
-    Serial.println(F(" cm"));
-    Serial.print(F("Estimated sweep-circle diameter: "));
-    Serial.print(2.0f * sweepRadiusCm, 2);
-    Serial.println(F(" cm"));
-    Serial.print(F("Maze cell: "));
-    Serial.print(MAZE_CELL_SIZE_CM, 1);
-    Serial.print(F(" x "));
-    Serial.print(MAZE_CELL_SIZE_CM, 1);
-    Serial.println(F(" cm"));
-    Serial.print(F("Centered-cell lateral shift allowance: "));
-    Serial.print((MAZE_CELL_SIZE_CM - TURN_CHASSIS_WIDTH_CM) * 0.5f, 2);
-    Serial.println(F(" cm"));
-    Serial.println(F("Geometry estimate; turn arc adapts to the outside-side sensor."));
-}
-
 bool          started = false;
 bool          turnFault = false;
 unsigned long t0      = 0;
@@ -56,7 +21,6 @@ const float MAX_DUTY = 28.0f;
 const float WALL_STEER_GAIN = 1.5f;
 const float MAX_WALL_STEER_DUTY = 8.0f;
 const float WALL_ERROR_DEADBAND_CM = 0.5f;
-
 const float GYRO_HEADING_GAIN = STRAIGHT_TEST_GYRO_KP;
 const float MAX_GYRO_STEER_DUTY = STRAIGHT_TEST_MAX_CORRECTION;
 const float MAX_COMBINED_STEER_DUTY = 10.0f;
@@ -65,9 +29,6 @@ const float GYRO_HEADING_DEADBAND_DEG = 1.0f;
 const float ENCODER_SYNC_GAIN = 0.35f;    // duty percentage per tick of wheel progress mismatch
 const float MAX_ENCODER_SYNC_DUTY = 8.0f;
 const long ENCODER_SYNC_DEADBAND_TICKS = 1;
-
-const float ULTRASONIC_STEER_STEP_DUTY = 5.0f;
-const float SINGLE_WALL_STEER_MIN_DIST_CM = 4.0f;
 
 // Sensor is mounted upside down; Gyroscope corrects yaw so left is positive.
 Gyroscope gyroscope(Wire, true);
@@ -93,126 +54,9 @@ enum RelativeDir { REL_LEFT = -1, REL_FRONT = 0, REL_RIGHT = 1, REL_DEAD = 99 };
 void moveForwardPID();
 void  navigateStep();
 bool initializeGyroscope();
-bool turnWithGyroscope(float targetDegrees, float reverseSpeedRatio);
-bool advanceForTurn(float distanceCm);
-float calculateTurnReverseRatio(float targetDegrees);
-
-// Optional, measured pre-turn adjustment. Positive distance advances toward
-// the front of the current cell; zero leaves the existing turn position intact.
-bool advanceForTurn(float distanceCm) {
-    if (distanceCm <= 0.0f) return true;
-
-    const long targetTicks = lroundf(
-        distanceCm * TICKS_PER_CELL_25CM / 25.0f);
-    if (targetTicks <= 0) return true;
-
-    resetEncoders();
-    const unsigned long startMs = millis();
-    unsigned long lastFrontCheckMs = 0;
-    const unsigned long timeoutMs = 1000UL + (unsigned long)(distanceCm * 250.0f);
-
-    Serial.print(F("Turn entry advance: "));
-    Serial.print(distanceCm, 1);
-    Serial.print(F(" cm ("));
-    Serial.print(targetTicks);
-    Serial.println(F(" ticks)"));
-
-    while (millis() - startMs < timeoutMs) {
-        if (millis() - lastFrontCheckMs >= 50UL) {
-            const float front = readUltrasonic(
-                PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO);
-            if (front > 0.1f && front < SAFETY_DIST) {
-                stopMotors();
-                Serial.println(F("Turn entry advance stopped: front obstacle."));
-                return false;
-            }
-            lastFrontCheckMs = millis();
-        }
-
-        long leftPos;
-        long rightPos;
-        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            leftPos = leftEncoderCount;
-            rightPos = rightEncoderCount;
-        }
-
-        if (leftPos >= targetTicks - 2 && rightPos >= targetTicks - 2) {
-            stopMotors();
-            delay(100);
-            return true;
-        }
-
-        const long difference = leftPos - rightPos;
-        const float sync = constrain(
-            difference * ENCODER_SYNC_GAIN,
-            -MAX_ENCODER_SYNC_DUTY,
-            MAX_ENCODER_SYNC_DUTY);
-        const float leftDuty = (leftPos >= targetTicks - 2)
-            ? 0.0f : constrain(TURN_ENTRY_SPEED - sync, 0.0f, MAX_DUTY);
-        const float rightDuty = (rightPos >= targetTicks - 2)
-            ? 0.0f : constrain(TURN_ENTRY_SPEED + sync, 0.0f, MAX_DUTY);
-        setMotors(leftDuty, rightDuty);
-    }
-
-    stopMotors();
-    Serial.println(F("Turn entry advance failed: timeout."));
-    return false;
-}
-
-// Estimate the lateral center shift needed during a turn from the outside-wall
-// reading. The reverse/forward wheel ratio sets the center's arc radius:
-// r = track*(1-ratio)/(2*(1+ratio)). A turn-side open cell allows the center
-// to move toward that opening while the gyro controls the final heading.
-float calculateTurnReverseRatio(float targetDegrees) {
-    const bool leftTurn = targetDegrees > 0.0f;
-    const float outsideWallGap = leftTurn ? rightDist : leftDist;
-    const bool outsideWallSeen =
-        outsideWallGap > 0.1f && outsideWallGap <= WALL_THRESHOLD;
-
-    if (!outsideWallSeen) {
-        Serial.println(F("Turn sweep: no outside wall detected; using tuned ratio."));
-        return constrain(TURN_REVERSE_SPEED_RATIO, 0.0f, 1.0f);
-    }
-
-    const float halfWidth = TURN_CHASSIS_WIDTH_CM * 0.5f;
-    const float sweepRadius = getTurnSweepRadiusCm();
-    const float pivotToOutsideWall = halfWidth + outsideWallGap;
-    const float maxCenterShift =
-        (MAZE_CELL_SIZE_CM - TURN_CHASSIS_WIDTH_CM) * 0.5f;
-    const float neededShift = max(
-        0.0f,
-        sweepRadius + TURN_SIDE_CLEARANCE_MARGIN_CM - pivotToOutsideWall);
-    const float centerShift = min(neededShift, maxCenterShift);
-
-    const float theta = fabs(targetDegrees) * (PI / 180.0f);
-    const float lateralFactor = 1.0f - cosf(theta);
-    float geometryRatio = 1.0f;
-    if (centerShift > 0.0f && lateralFactor > 0.001f) {
-        const float centerArcRadius = centerShift / lateralFactor;
-        geometryRatio = (WHEELBASE_CM - 2.0f * centerArcRadius) /
-                        (WHEELBASE_CM + 2.0f * centerArcRadius);
-        geometryRatio = constrain(geometryRatio, 0.0f, 1.0f);
-    }
-
-    // Keep at least the user-tuned forward arc; add more shift only when the
-    // side-wall geometry calls for it.
-    const float ratio = min(
-        geometryRatio,
-        constrain(TURN_REVERSE_SPEED_RATIO, 0.0f, 1.0f));
-
-    Serial.print(F("Turn sweep side gap="));
-    Serial.print(outsideWallGap, 1);
-    Serial.print(F(" cm; needed shift="));
-    Serial.print(neededShift, 1);
-    Serial.print(F(" cm; applied shift="));
-    Serial.print(centerShift, 1);
-    Serial.print(F(" cm; reverse ratio="));
-    Serial.println(ratio, 2);
-    if (neededShift > maxCenterShift) {
-        Serial.println(F("Turn clearance estimate exceeds available centered-cell offset."));
-    }
-    return ratio;
-}
+bool turnWithGyroscope(float targetDegrees);
+bool turnWithGyroscopePivot(float targetDegrees, bool lockLeftWheel);
+bool turnAroundWithGyroscopePivots();
 
 RelativeDir findNextUnvisitedNeighbor() {
     bool leftWall  = isWallOnLeft();
@@ -262,13 +106,8 @@ void navigateStep() {
     if (nextDir == REL_DEAD) {
         Serial.println("Dead end -> turn around");
         if (USE_TWO_90_TURNS_FOR_180) {
-            const float correctedLeft90 = 90.0f + TURN_LEFT_CORRECTION_DEG;
-            if (!turnWithGyroscope(correctedLeft90, TURN_REVERSE_SPEED_RATIO)) {
-                turnFault = true;
-            } else if (!turnWithGyroscope(correctedLeft90, TURN_REVERSE_SPEED_RATIO)) {
-                turnFault = true;
-            }
-        } else if (!turnWithGyroscope(180.0f, TURN_REVERSE_SPEED_RATIO)) {
+            if (!turnAroundWithGyroscopePivots()) turnFault = true;
+        } else if (!turnWithGyroscope(180.0f)) {
             turnFault = true;
         }
         return;
@@ -276,13 +115,8 @@ void navigateStep() {
 
     if (nextDir == REL_LEFT) {
         Serial.println("Turning left");
-        if (!advanceForTurn(LEFT_TURN_ENTRY_ADVANCE_CM)) {
-            turnFault = true;
-            return;
-        }
-        const float targetDegrees = 90.0f + TURN_LEFT_CORRECTION_DEG;
-        const float reverseRatio = calculateTurnReverseRatio(targetDegrees);
-        if (!turnWithGyroscope(targetDegrees, reverseRatio)) {
+        const float targetDegrees = 90.0f - TURN_LEFT_CORRECTION_DEG;
+        if (!turnWithGyroscope(targetDegrees)) {
             turnFault = true;
             return;
         }
@@ -292,13 +126,8 @@ void navigateStep() {
 
     if (nextDir == REL_RIGHT) {
         Serial.println("Turning right");
-        if (!advanceForTurn(RIGHT_TURN_ENTRY_ADVANCE_CM)) {
-            turnFault = true;
-            return;
-        }
-        const float targetDegrees = -90.0f - TURN_RIGHT_CORRECTION_DEG;
-        const float reverseRatio = calculateTurnReverseRatio(targetDegrees);
-        if (!turnWithGyroscope(targetDegrees, reverseRatio)) {
+        const float targetDegrees = -90.0f + TURN_RIGHT_CORRECTION_DEG;
+        if (!turnWithGyroscope(targetDegrees)) {
             turnFault = true;
             return;
         }
@@ -325,7 +154,7 @@ bool initializeGyroscope() {
     return true;
 }
 
-bool turnWithGyroscope(float targetDegrees, float reverseSpeedRatio) {
+bool turnWithGyroscope(float targetDegrees) {
     if (!gyroReady) {
         stopMotors();
         Serial.println(F("Turn refused: MPU6050 is not ready."));
@@ -372,7 +201,7 @@ bool turnWithGyroscope(float targetDegrees, float reverseSpeedRatio) {
                     TURN_MIN_DUTY + progress * (TURN_SPEED - TURN_MIN_DUTY));
             }
             const int reverseDuty = (int)lroundf(
-                duty * constrain(reverseSpeedRatio, 0.0f, 1.0f));
+                duty * constrain(TURN_REVERSE_SPEED_RATIO, 0.0f, 1.0f));
 
             if (direction < 0) setMotors(-reverseDuty, duty);
             else setMotors(duty, -reverseDuty);
@@ -400,6 +229,105 @@ bool turnWithGyroscope(float targetDegrees, float reverseSpeedRatio) {
 
     Serial.println(F("Turn did not reach corrected target tolerance."));
     return false;
+}
+
+// A 180-degree dead-end turn is split into two gyro-measured 90-degree phases.
+// The wheel that would be locked instead counter-rotates at the configured ratio.
+bool turnWithGyroscopePivot(float targetDegrees, bool lockLeftWheel) {
+    if (!gyroReady) {
+        stopMotors();
+        Serial.println(F("Pivot turn refused: MPU6050 is not ready."));
+        return false;
+    }
+
+    const unsigned long timeoutMs = TURN_90_TIMEOUT_MS;
+    const unsigned long startMs = millis();
+    unsigned long nextSampleUs = micros();
+    const float startAngle = gyroscope.getYawAngleDeg();
+    float angle = 0.0f;
+
+    Serial.print(F("Gyro pivot target: "));
+    Serial.print(targetDegrees, 1);
+    Serial.print(F(" deg; locked wheel: "));
+    Serial.println(lockLeftWheel ? F("left") : F("right"));
+
+    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+        angle = gyroscope.getYawAngleDeg() - startAngle;
+        while (fabs(targetDegrees - angle) > TURN_STOP_TOLERANCE_DEG &&
+               millis() - startMs < timeoutMs) {
+            if ((long)(micros() - nextSampleUs) < 0) continue;
+
+            gyroscope.update();
+            angle = gyroscope.getYawAngleDeg() - startAngle;
+            gyroHeadingDeg = gyroscope.getYawAngleDeg();
+
+            const float error = targetDegrees - angle;
+            const float absError = fabs(error);
+            int duty = TURN_SPEED;
+            if (absError < TURN_SLOWDOWN_START_ERROR_DEG) {
+                const float range = TURN_SLOWDOWN_START_ERROR_DEG -
+                                    TURN_STOP_TOLERANCE_DEG;
+                const float progress = constrain(
+                    (absError - TURN_STOP_TOLERANCE_DEG) / range,
+                    0.0f,
+                    1.0f);
+                duty = (int)lroundf(
+                    TURN_MIN_DUTY + progress * (TURN_SPEED - TURN_MIN_DUTY));
+            }
+
+            // Positive gyro yaw is left. The main wheel drives the turn; the
+            // opposite wheel counter-rotates at TURN_REVERSE_SPEED_RATIO.
+            int movingWheelSpeed;
+            if (lockLeftWheel) {
+                movingWheelSpeed = (error > 0.0f) ? duty : -duty;
+            } else {
+                movingWheelSpeed = (error > 0.0f) ? -duty : duty;
+            }
+            const int counterWheelSpeed = (movingWheelSpeed > 0 ? -1 : 1) *
+                (int)lroundf(duty * constrain(TURN_REVERSE_SPEED_RATIO, 0.0f, 1.0f));
+            if (lockLeftWheel) {
+                setMotors(counterWheelSpeed, movingWheelSpeed);
+            } else {
+                setMotors(movingWheelSpeed, counterWheelSpeed);
+            }
+
+            nextSampleUs += GYRO_SAMPLE_INTERVAL_US;
+        }
+
+        stopMotors();
+        delay(200);
+        gyroscope.update();
+        angle = gyroscope.getYawAngleDeg() - startAngle;
+        gyroHeadingDeg = gyroscope.getYawAngleDeg();
+        const float finalError = targetDegrees - angle;
+
+        Serial.print(F("Pivot measured="));
+        Serial.print(angle, 2);
+        Serial.print(F(" deg; target="));
+        Serial.print(targetDegrees, 2);
+        Serial.print(F(" deg; error="));
+        Serial.println(finalError, 2);
+
+        if (fabs(finalError) <= TURN_STOP_TOLERANCE_DEG) {
+            gyroHeadingTargetDeg = gyroHeadingDeg;
+            return true;
+        }
+        if (millis() - startMs >= timeoutMs) break;
+        Serial.println(F("Pivot outside tolerance after settling; correcting."));
+    }
+
+    stopMotors();
+    Serial.println(F("Gyro pivot failed to reach target tolerance."));
+    return false;
+}
+
+bool turnAroundWithGyroscopePivots() {
+    // Apply the measured 90-degree under-turn compensation to each phase.
+    // Both phases produce positive (left) gyro yaw in this dead-end sequence.
+    const float correctedLeft90 = 90.0f - TURN_LEFT_CORRECTION_DEG;
+
+    if (!turnWithGyroscopePivot(correctedLeft90, true)) return false;
+    return turnWithGyroscopePivot(correctedLeft90, false);
 }
 /*
 void moveForwardPID() {
@@ -597,56 +525,57 @@ void moveForwardPID() {
     unsigned long lastCheck = 0;
     unsigned long nextGyroSampleUs = micros();
     unsigned long lastDriveReportMs = startTime;
+    const char *stopReason = "tick target";
 
-    // Keep these corrections separate so you can tune them independently.
     float ultrasonicSteering = 0.0f;
     float gyroSteering = 0.0f;
     float steeringAdjustment = 0.0f;
 
     while (!reached) {
-        if (millis() - startTime > 4000UL) {
+        if (millis() - startTime > STRAIGHT_TEST_TIMEOUT_MS) {
+            stopReason = "timeout";
             break;
         }
 
-        // Refresh ultrasonic steering every 50 ms.
+        // Refresh front safety and side-wall centering every 50 ms.
         if (millis() - lastCheck > 50UL) {
             const float front = readUltrasonic(
                 PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO);
 
             if (front > 0.1f && front < SAFETY_DIST) {
                 Serial.println(F("OBSTACLE - STOP"));
+                stopReason = "front obstacle";
                 stopMotors();
                 break;
             }
 
-            const float r = readUltrasonic(
+            const float right = readUltrasonic(
                 PIN_ULTRA_RIGHT_TRIG, PIN_ULTRA_RIGHT_ECHO);
-            const float l = readUltrasonic(
+            const float left = readUltrasonic(
                 PIN_ULTRA_LEFT_TRIG, PIN_ULTRA_LEFT_ECHO);
 
-            // readUltrasonic() returns 100 cm when there is no echo.
             const bool rightWallSeen =
-                r > 0.1f && r <= WALL_THRESHOLD;
+                right > 0.1f && right <= WALL_THRESHOLD;
             const bool leftWallSeen =
-                l > 0.1f && l <= WALL_THRESHOLD;
+                left > 0.1f && left <= WALL_THRESHOLD;
 
-            ultrasonicSteering = 0.0f;
-
-            if (rightWallSeen && leftWallSeen) {
-                if (r < CENTER_DIST) {
-                    ultrasonicSteering = ULTRASONIC_STEER_STEP_DUTY;
-                } else if (l < CENTER_DIST) {
-                    ultrasonicSteering = -ULTRASONIC_STEER_STEP_DUTY;
-                }
+            float wallError = 0.0f;
+            if (leftWallSeen && rightWallSeen) {
+                // Keep equal side gaps when both walls are visible.
+                wallError = left - right;
             } else if (rightWallSeen) {
-                if (r > SINGLE_WALL_STEER_MIN_DIST_CM) {
-                    ultrasonicSteering = ULTRASONIC_STEER_STEP_DUTY;
-                }
+                wallError = CENTER_DIST - right;
             } else if (leftWallSeen) {
-                if (l > SINGLE_WALL_STEER_MIN_DIST_CM) {
-                    ultrasonicSteering = -ULTRASONIC_STEER_STEP_DUTY;
-                }
+                wallError = left - CENTER_DIST;
             }
+
+            if (fabs(wallError) < WALL_ERROR_DEADBAND_CM) {
+                wallError = 0.0f;
+            }
+            ultrasonicSteering = constrain(
+                wallError * WALL_STEER_GAIN,
+                -MAX_WALL_STEER_DUTY,
+                MAX_WALL_STEER_DUTY);
 
             lastCheck = millis();
         }
@@ -671,8 +600,6 @@ void moveForwardPID() {
             nextGyroSampleUs += GYRO_SAMPLE_INTERVAL_US;
         }
 
-        // Combine ultrasonic and gyro corrections only after calculating each
-        // independently. Encoder synchronization is added separately below.
         steeringAdjustment = constrain(
             ultrasonicSteering + gyroSteering,
             -MAX_COMBINED_STEER_DUTY,
@@ -704,8 +631,8 @@ void moveForwardPID() {
         const float uR =
             kpR * eR + kdR * dedtR + kiR * eintegralR;
 
-        if (leftPos >= targetL - 5) leftDone = true;
-        if (rightPos >= targetR - 5) rightDone = true;
+        if (leftPos >= targetL) leftDone = true;
+        if (rightPos >= targetR) rightDone = true;
 
         long encoderDifference = leftPos - rightPos;
         if (labs(encoderDifference) <= ENCODER_SYNC_DEADBAND_TICKS) {
@@ -725,10 +652,12 @@ void moveForwardPID() {
         float pwrL = min(fabs(uL), MAX_DUTY);
         float pwrR = min(fabs(uR), MAX_DUTY);
 
-        if (!leftDone && eL > 0 && eL <= 25 && pwrL > 20.0f) {
+        // Preserve enough torque near the target to avoid stalling short of
+        // the requested encoder count; stop each wheel at its exact target.
+        if (!leftDone && eL > 0 && eL <= 25 && pwrL < 20.0f) {
             pwrL = 20.0f;
         }
-        if (!rightDone && eR > 0 && eR <= 25 && pwrR > 20.0f) {
+        if (!rightDone && eR > 0 && eR <= 25 && pwrR < 20.0f) {
             pwrR = 20.0f;
         }
 
@@ -762,14 +691,29 @@ void moveForwardPID() {
 
     stopMotors();
     delay(200);
+
+    long finalLeftPos;
+    long finalRightPos;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        finalLeftPos = leftEncoderCount;
+        finalRightPos = rightEncoderCount;
+    }
+    Serial.print(F("Cell move ended: L="));
+    Serial.print(finalLeftPos);
+    Serial.print(F("/"));
+    Serial.print(targetL);
+    Serial.print(F(" ticks, R="));
+    Serial.print(finalRightPos);
+    Serial.print(F("/"));
+    Serial.print(targetR);
+    Serial.print(F(" ticks; reason="));
+    Serial.println(stopReason);
 }
 
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    printTurnSweepGeometry();
-
     pinMode(PIN_LEFT_ENC_A, INPUT_PULLUP);
     pinMode(PIN_LEFT_ENC_B, INPUT_PULLUP);
     pinMode(PIN_RIGHT_ENC_A, INPUT_PULLUP);

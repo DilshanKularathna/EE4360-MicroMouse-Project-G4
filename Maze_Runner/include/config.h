@@ -27,9 +27,25 @@ const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
 const int WHITE_VALUES[8] = {288, 158, 195, 324, 382, 516, 492, 460};
 const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
 
+// Maze-to-line bridge marker is read as a sequence of broad floor bands:
+// white, black, white, black. A broad band must cover most of the sensor array.
+#define SWITCH_MARKER_WHITE_MAX_BLACK_SENSORS 2
+#define SWITCH_MARKER_BLACK_MIN_BLACK_SENSORS 6
+#define SWITCH_MARKER_STABLE_SAMPLES          3
+#define SWITCH_TO_LINE_CREEP_SPEED            12
+#define SWITCH_TO_LINE_CREEP_MAX_CM           15.0f
+#define SWITCH_TO_LINE_CREEP_TIMEOUT_MS       8000UL
+#define SWITCH_TO_LINE_MIN_WHITE_SENSORS      5
+#define SWITCH_TO_LINE_MIN_BLACK_SENSORS      1
+#define SWITCH_TO_LINE_BASE_SPEED             10
+#define SWITCH_TO_LINE_MAX_SPEED              35
+#define SWITCH_TO_LINE_KP                     0.030f
+#define SWITCH_TO_LINE_KI                     0.000f
+#define SWITCH_TO_LINE_KD                     0.100f
+
 // Default PID Parameters
-#define DEFAULT_BASE_PWM    15
-#define DEFAULT_MAX_PWM     80
+#define DEFAULT_BASE_PWM    10
+#define DEFAULT_MAX_PWM     50
 #define DEFAULT_KP          0.030f
 #define DEFAULT_KI          0.000f
 #define DEFAULT_KD          0.100f
@@ -37,35 +53,37 @@ const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
 // Calibrated Calibration Values
 // 288 ticks = 25 cm (1 cell) -> 11.52 ticks/cm
 const float TICKS_PER_CELL_25CM = 282.0;
-// const float TICKS_PER_90_DEG = 116.5;  // Average of 116-117 ticks
-const float TICKS_PER_180_DEG = 232.0; // Average of 232-233 ticks
+// Encoder target for an in-place 90 degree turn.
+const float TICKS_PER_90_DEG = 116.5;  // Earlier calibration
+const float TICKS_PER_180_DEG = 232.0;  // Average of 232-233 ticks
 
-const float TICKS_PER_90_DEG = 140.0;  // Average of 116-117 ticks
+// const float TICKS_PER_90_DEG = 140.0;
 // const float TICKS_PER_180_DEG = 280.2; // Average of 232-233 ticks
 
 #define WHEEL_DIAMETER_CM 6.0f
 #define WHEELBASE_CM 18.0f
-#define MAZE_CELL_SIZE_CM 25.0f
-#define TURN_AXLE_TO_FARTHEST_END_CM 12.6f
-#define TURN_CHASSIS_WIDTH_CM 18.0f
 #define ENCODER_COUNTS_PER_REV 224 
 static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCODER_COUNTS_PER_REV);
-#define TURN_SPEED 15
-// User-tuned upper bound for reverse-side wheel speed. Side-clearance geometry
-// may lower the ratio on a turn that needs more center shift toward the opening.
-#define TURN_REVERSE_SPEED_RATIO 0.85f
-// Extra sweep clearance beyond the geometric minimum.
-#define TURN_SIDE_CLEARANCE_MARGIN_CM 0.5f
+#define TURN_SPEED 20
+// User-tuned reverse-side wheel speed ratio during gyro turns.
+#define TURN_REVERSE_SPEED_RATIO 1.0f
 // Gyro turn controller tuning.
 // User-tuned turn calibration values. Preserve these during tuning.
-#define TURN_LEFT_CORRECTION_DEG      -3.0f
-#define TURN_RIGHT_CORRECTION_DEG     -2.9f
-#define USE_TWO_90_TURNS_FOR_180      1
-#define TURN_STOP_TOLERANCE_DEG       5.0f
+#define TURN_LEFT_CORRECTION_DEG      4.5f
+#define TURN_RIGHT_CORRECTION_DEG     0.0f
+#define USE_TWO_90_TURNS_FOR_180      0
+#define TURN_STOP_TOLERANCE_DEG       2.0f
 #define TURN_SLOWDOWN_START_ERROR_DEG 20.0f
 #define TURN_MIN_DUTY                 15
 #define TURN_90_TIMEOUT_MS            5000UL
 #define TURN_180_TIMEOUT_MS           5000UL
+
+// Select how 90 degree pivots are measured:
+// TURN_90_MODE_GYRO uses gyro yaw; TURN_90_MODE_ENCODER uses encoder ticks.
+#define TURN_90_MODE_GYRO              0
+#define TURN_90_MODE_ENCODER           1
+#define TURN_90_MODE                   TURN_90_MODE_ENCODER
+#define TURN_STALL_MIN_PROGRESS_TICKS  2
 
 // Straight-line gyro test tuning. The tick target uses TICKS_PER_CELL_25CM.
 // Positive trim increases that wheel's PWM; use small +/- values for tuning.
@@ -76,16 +94,18 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 #define STRAIGHT_TEST_TIMEOUT_MS      10000UL
 
 #define WALL_THRESHOLD 20.0f
+#define LEFT_WALL_THRESHOLD  20.0f
+#define RIGHT_WALL_THRESHOLD 20.0f
 #define FRONT_OBSTACLE WALL_THRESHOLD
-#define CENTER_DIST 4.0f
-#define SAFETY_DIST 5.0f
-
-// Optional extra forward travel immediately before a 90-degree turn.
-// Positive values move the robot closer to the front of the current cell;
-// keep at 0 until a specific maze turn has been measured and tuned.
-#define LEFT_TURN_ENTRY_ADVANCE_CM  0.0f
-#define RIGHT_TURN_ENTRY_ADVANCE_CM 0.0f
-#define TURN_ENTRY_SPEED            18
+// Desired clearance from either side wall. Change this one value to tune both.
+#define SIDE_WALL_TARGET_CM 6.5f
+#define CENTER_DIST         SIDE_WALL_TARGET_CM
+#define LEFT_CENTER_DIST    SIDE_WALL_TARGET_CM
+#define RIGHT_CENTER_DIST   SIDE_WALL_TARGET_CM
+#define SAFETY_DIST 4.5f
+#define NO_WALL_CREEP_DUTY 14.0f
+#define MAZE_MAP_WIDTH 9
+#define MAZE_MAP_HEIGHT 9
 
 // --- Ultrasonic Sensor Pins ---
 #define PIN_ULTRA_FRONT_TRIG       24 // Black wire - Echo, Blue - Trig
@@ -116,5 +136,51 @@ static const float CM_PER_COUNT           = (3.14159f * WHEEL_DIAMETER_CM / ENCO
 #define EAST 1
 #define SOUTH 2
 #define WEST 3
+
+// ---------------------------------------------------------------
+// Tuning block. Every value also has a default in main_updated.cpp,
+// so this is optional; it just lets you tune everything in one place.
+// ---------------------------------------------------------------
+
+// --- Robot geometry (cm). 0 = not set (boot check is skipped).
+#define ROBOT_WIDTH_CM            18.0f  // widest point of the body, wheels included
+#define AXLE_TO_REAR_CM           12.6f  // axle centreline -> rearmost point of the body
+#define AXLE_TO_FRONT_CM          4.1f   // axle centreline -> frontmost point (16.7 total length)
+#define CELL_INNER_WIDTH_CM       25.0f  // MEASURE: real free gap between facing walls
+#define TRACK_WIDTH_CM            18.0f  // MEASURE: distance between the two wheel CENTRES
+#define PIVOT_CLEARANCE_MARGIN_CM 1.0f   // spare room wanted on each side
+
+// --- Side-wall correction. Direct duty steering lets the ultrasonic sensors
+// turn away from a nearby wall; 0 disables it, 1 is nominal, higher is stronger.
+#define WALL_STEER_AS_HEADING        0
+#define ULTRASONIC_STEER_WEIGHT      5.0f
+#define WALL_HEADING_GAIN_DEG_PER_CM 1.5f
+#define WALL_HEADING_MAX_DEG         4.0f
+
+// --- Arc turns: OFF, so 90 degree turns are pivots around the axle centre.
+//     (Arc code stays in the main file; set to 1 to use it again.)
+#define USE_ARC_TURNS             0
+#define ARC_TURN_RADIUS_CM        10.0f   // tail swing = sqrt(rear^2 + (R + width/2)^2) - R
+#define ARC_BACKUP_DUTY           10     // also the reverse duty for pivots; 10 was below TURN_MIN_DUTY
+#define ARC_BACKUP_TRIM_CM        0.0f   // reverse overshoot in cm: stop the reverse this much earlier
+#define ARC_TURN_SPEED            10     // outer-wheel duty; inner gets this x ratio
+
+// --- Reverse before pivoting
+#define REVERSE_BEFORE_PIVOT      1      // 1 = back up before 90 degree pivots and 180 turns
+#define PIVOT_BACKUP_CM           1.5f   // reverse distance before a 90 degree pivot
+#define TURN_AROUND_BACKUP_CM     6.0f   // reverse distance before a 180 degree turn
+
+// --- 90 degree pivot style (only used when USE_ARC_TURNS is 0)
+//     0 = spin about the axle centre (both wheels counter-rotate)
+//     1 = pivot about one wheel (left turn about left wheel, right turn about right wheel)
+//     For a TRUE one-wheel pivot also set TURN_REVERSE_SPEED_RATIO to 0.0 above.
+#define TURN90_WHEEL_LOCK         1
+
+// --- Stall detection during turns
+#define TURN_STALL_WINDOW_MS         400UL
+#define TURN_STALL_MIN_PROGRESS_DEG  2.0f
+
+// --- Median of 3 sensor readings for turn decisions
+#define USE_SENSOR_MEDIAN         1
 
 #endif // CONFIG_H

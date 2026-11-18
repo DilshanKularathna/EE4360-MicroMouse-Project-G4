@@ -36,11 +36,11 @@ bool isPathClearFront() {
 }
 
 bool isWallOnRight() {
-    return rightDist <= WALL_THRESHOLD;
+    return rightDist > 0.1f && rightDist <= RIGHT_WALL_THRESHOLD;
 }
 
 bool isWallOnLeft() {
-    return leftDist <= WALL_THRESHOLD;
+    return leftDist > 0.1f && leftDist <= LEFT_WALL_THRESHOLD;
 }
 
 float calibrateDistance(float rawDist, int trigPin) {
