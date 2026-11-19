@@ -13,10 +13,13 @@ Gyroscope::Gyroscope(uint8_t i2cAddr, uint8_t gyroFs, uint8_t accelFs, uint8_t d
       _headingDeg(0.0f),
       _lastUpdateUs(0)
 {
-    // Zero-initialise calibration struct
+    // Zero-initialise calibration struct; safe defaults for new fields
     _cal = { 0.0f, 0.0f, 0.0f,   // gyro offsets
              0.0f, 0.0f, 0.0f,   // accel offsets
-             0, 0.0f, false };
+             0, 0.0f, false,
+             1.0f,               // headingScaleFactor — no correction until set
+             25.0f,              // calTemperatureC   — assumed 25 °C
+             1.3f };             // gyroDriftPerDegC  — MPU-6050 typical
 }
 
 // ============================================================================
@@ -196,6 +199,29 @@ const GyroCalibration& Gyroscope::runStaticCalibration(uint16_t numSamples, uint
 // ============================================================================
 void Gyroscope::loadCalibration(const GyroCalibration& cal) {
     _cal = cal;
+    // Guard: if the loaded struct was written before the new fields existed,
+    // the headingScaleFactor might be 0.0 (zero-initialised memory).
+    // Fall back to 1.0 (identity) so we never multiply heading by zero.
+    if (_cal.headingScaleFactor < 0.5f || _cal.headingScaleFactor > 2.0f) {
+        _cal.headingScaleFactor = 1.0f;
+    }
+    if (_cal.gyroDriftPerDegC < 0.0f) {
+        _cal.gyroDriftPerDegC = 1.3f;   // MPU-6050 datasheet typical
+    }
+}
+
+// ============================================================================
+//  setScaleAndThermal()
+//  Call once after loadCalibration() with the values from gyroscope_initial_data.h:
+//    gyro.setScaleAndThermal(GYRO_HEADING_SCALE_FACTOR,
+//                            GYRO_CAL_TEMPERATURE_C);
+// ============================================================================
+void Gyroscope::setScaleAndThermal(float scaleFactor,
+                                   float calTempC,
+                                   float driftLsbPerDegC) {
+    _cal.headingScaleFactor = scaleFactor;
+    _cal.calTemperatureC    = calTempC;
+    _cal.gyroDriftPerDegC   = driftLsbPerDegC;
 }
 
 // ============================================================================
@@ -231,18 +257,47 @@ float Gyroscope::updateHeading() {
     _lastUpdateUs     = now;
 
     GyroRawData raw = readRaw();
-    // Apply offset then scale to °/s
-    float gyroZ_dps = (raw.gyroZ - _cal.gyroOffsetZ) / _gyroSensitivity;
 
-    // Dead-band: ignore noise below 0.05 °/s
+    // -------------------------------------------------------------------------
+    //  Step 1 — Temperature-Compensated Bias Subtraction
+    //  The MPU-6050 ZRO drifts as temperature changes.  We adjust the stored
+    //  offset by the difference between the current die temperature and the
+    //  temperature at calibration time, scaled by the measured drift coefficient
+    //  (units: LSB / °C, default 1.3 from datasheet).
+    // -------------------------------------------------------------------------
+    float currentTempC = (raw.tempRaw / 340.0f) + 36.53f;
+    float tempDelta    = currentTempC - _cal.calTemperatureC;
+    float thermalBiasCorrection = tempDelta * _cal.gyroDriftPerDegC;  // LSB
+
+    float effectiveOffsetZ = _cal.gyroOffsetZ + thermalBiasCorrection;
+
+    // Convert bias-subtracted raw count to °/s
+    float gyroZ_dps = (raw.gyroZ - effectiveOffsetZ) / _gyroSensitivity;
+
+    // -------------------------------------------------------------------------
+    //  Step 2 — Dead-band Noise Suppression
+    //  Any residual rate below ±0.05 °/s when stationary is noise, not motion.
+    //  Clamping it to zero stops the integrator from accumulating phantom yaw.
+    // -------------------------------------------------------------------------
     if (gyroZ_dps > -0.05f && gyroZ_dps < 0.05f) {
         gyroZ_dps = 0.0f;
     }
 
-    // MPU-6050 follows the right-hand rule: with the chip mounted Z-up, a
-    // clockwise (viewed from above) rotation reads as NEGATIVE gyroZ.
-    // Negate so the integrated heading is positive for CW turns.
-    _headingDeg -= gyroZ_dps * dtSeconds;
+    // -------------------------------------------------------------------------
+    //  Step 3 — Coordinate Frame Sign Correction
+    //  MPU-6050 right-hand rule: CW rotation (viewed from above) → negative Z.
+    //  Negate so that positive heading means clockwise, matching maze convention.
+    // -------------------------------------------------------------------------
+    float deltaAngle = -(gyroZ_dps * dtSeconds);
+
+    // -------------------------------------------------------------------------
+    //  Step 4 — Scale Factor Correction
+    //  Physical turn tests showed the gyro consistently under-reads turns by
+    //  ~2.3 %.  Multiply each incremental angle by the measured scale factor
+    //  (1.0229) so the error does not compound across sequential turns.
+    // -------------------------------------------------------------------------
+    _headingDeg += deltaAngle * _cal.headingScaleFactor;
+
     return _headingDeg;
 }
 

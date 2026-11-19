@@ -182,3 +182,64 @@ void MotorDriver::turn180(int basePwm) {
 
     stop();
 }
+
+// ============================================================================
+//  Gyroscope-fused turns
+//  Primary stop condition: gyro heading reaches target.
+//  Safety watchdog:        encoder tick limit (150 % of encoder-only target)
+//                          prevents infinite spinning if the gyro is faulty.
+// ============================================================================
+
+// Helper: applies opposite-wheel pivot power (right-hand CW turn)
+static inline void applyPivotRight(MotorDriver* md, int basePwm,
+                                   uint8_t lR, uint8_t lL,
+                                   uint8_t rR, uint8_t rL) {
+    (void)md;
+    analogWrite(lR, basePwm); analogWrite(lL, 0);
+    analogWrite(rR, 0);       analogWrite(rL, basePwm);
+}
+
+void MotorDriver::turnRight90Gyro(Gyroscope& gyro, int basePwm) {
+    // Encoder watchdog: allow up to 150 % of the calibrated tick count
+    const long tickWatchdog = (long)(TICKS_PER_90_DEG * 1.5f);
+
+    gyro.resetHeading();
+    resetEncoders();
+
+    while (true) {
+        // Poll gyro heading — updateHeading() already applies scale factor
+        // and temperature compensation, so we target the raw 90.0° goal.
+        float heading = gyro.updateHeading();
+
+        if (heading >= 90.0f) break;                        // Gyro stop
+        if (getLeftPulses() >= tickWatchdog) break;         // Encoder watchdog
+
+        analogWrite(leftRpwm,  basePwm); analogWrite(leftLpwm,  0);
+        analogWrite(rightRpwm, 0);       analogWrite(rightLpwm, basePwm);
+
+        delay(5);   // 5 ms loop ≈ 200 Hz, matches gyro sample rate
+    }
+
+    stop();
+}
+
+void MotorDriver::turn180Gyro(Gyroscope& gyro, int basePwm) {
+    const long tickWatchdog = (long)(TICKS_PER_180_DEG * 1.5f);
+
+    gyro.resetHeading();
+    resetEncoders();
+
+    while (true) {
+        float heading = gyro.updateHeading();
+
+        if (heading >= 180.0f) break;
+        if (getLeftPulses() >= tickWatchdog) break;
+
+        analogWrite(leftRpwm,  basePwm); analogWrite(leftLpwm,  0);
+        analogWrite(rightRpwm, 0);       analogWrite(rightLpwm, basePwm);
+
+        delay(5);
+    }
+
+    stop();
+}

@@ -64,6 +64,23 @@ struct GyroCalibration {
     uint16_t sampleCount;      // Number of samples averaged during calibration
     float    gyroNoiseSigmaZ;  // 1-sigma noise on Z-axis gyro (LSB), test quality
     bool     isValid;          // Set true only after a successful calibration run
+
+    // -------------------------------------------------------------------------
+    //  Scale factor correction (from physical turn tests 7 & 8).
+    //  headingScaleFactor = sum(target_angles) / sum(measured_angles).
+    //  Applied inside updateHeading() to fix systematic under/over-shoot.
+    //  Set to 1.0 (no correction) until physical turn data is available.
+    // -------------------------------------------------------------------------
+    float    headingScaleFactor;
+
+    // -------------------------------------------------------------------------
+    //  Thermal drift compensation.
+    //  calTemperatureC  : chip temperature (°C) when calibration was run.
+    //  gyroDriftPerDegC : offset change per °C (LSB/°C). MPU-6050 typical ~1.3
+    //  Applied inside updateHeading() when temperature deviates from cal temp.
+    // -------------------------------------------------------------------------
+    float    calTemperatureC;
+    float    gyroDriftPerDegC;
 };
 
 // ============================================================================
@@ -158,11 +175,23 @@ public:
     void resetHeading();
 
     // Integrate gyroZ reading over time → returns accumulated yaw in degrees.
+    // Applies: bias subtraction, temperature compensation, dead-band, scale factor.
     // Call repeatedly in a tight loop (every ~5–10 ms) while turning.
     float updateHeading();
 
     // Return current integrated heading (degrees, positive = CW viewed from above; sensor mounted Z-up)
     float getHeading() const { return _headingDeg; }
+
+    // =========================================================================
+    //  THERMAL DRIFT COMPENSATION
+    // =========================================================================
+
+    // Set the heading scale factor from physical turn tests (e.g. 1.0229).
+    // Also sets calibration temperature and thermal drift coefficient.
+    // Call once after loadCalibration() when you have measured turn data.
+    void setScaleAndThermal(float scaleFactor,
+                            float calTempC,
+                            float driftLsbPerDegC = 1.3f);
 
     // =========================================================================
     //  UTILITY

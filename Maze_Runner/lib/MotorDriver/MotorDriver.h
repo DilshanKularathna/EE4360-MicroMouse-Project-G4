@@ -2,6 +2,7 @@
 #define MOTOR_DRIVER_H
 
 #include <Arduino.h>
+#include "Gyroscope.h"
 
 class MotorDriver {
 private:
@@ -31,8 +32,24 @@ public:
 
     // Controlled closed-loop movements using Encoders & PI controller
     void moveCells(float numCells, int basePwm = 70);
+
+    // -------------------------------------------------------------------------
+    //  Encoder-only turns (original behaviour, kept as fallback)
+    // -------------------------------------------------------------------------
     void turnRight90(int basePwm = 70);
     void turn180(int basePwm = 70);
+
+    // -------------------------------------------------------------------------
+    //  Gyroscope-fused turns (preferred for accuracy)
+    //  Uses the gyroscope heading integrator as the primary stop condition.
+    //  Encoder ticks provide a watchdog so the robot cannot spin indefinitely
+    //  if the gyro is disconnected or returns garbage.
+    //
+    //  @param gyro     Reference to an initialised, calibrated Gyroscope.
+    //  @param basePwm  Motor drive strength (default 70).
+    // -------------------------------------------------------------------------
+    void turnRight90Gyro(Gyroscope& gyro, int basePwm = 70);
+    void turn180Gyro    (Gyroscope& gyro, int basePwm = 70);
 
     // Static ISR Callback Routines
     static void handleLeftEncoder();

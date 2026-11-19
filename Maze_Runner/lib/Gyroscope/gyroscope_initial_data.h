@@ -104,7 +104,10 @@ static const GyroCalibration STORED_GYRO_CALIBRATION = {
     /* accelOffsetZ */  -4198.71f,
     /* sampleCount  */  1000,
     /* gyroNoiseSigmaZ */ 4.896f,
-    /* isValid      */  true     // Set to true after filling real values
+    /* isValid      */  true,     // Set to true after filling real values
+    /* headingScaleFactor */ 1.0229f,  // From TEST 7 & 8: sum(targets)/sum(measured)
+    /* calTemperatureC    */ 28.26f,   // Die temperature at calibration time (TEST 6)
+    /* gyroDriftPerDegC   */ 1.3f      // MPU-6050 datasheet typical (LSB/°C)
 };
 
 // ============================================================================
