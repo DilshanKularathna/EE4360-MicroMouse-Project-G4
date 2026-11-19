@@ -77,13 +77,13 @@ static const uint16_t GYRO_TURN_TIMEOUT_MS = 2000;
 // ============================================================================
 
 // --- Group 4 Unit Baseline (update after first physical test run) ---
-// Status: PLACEHOLDER — replace with actual measured values
-static const int16_t GYRO_BASELINE_GYRO_X_RAW  =  0;    // TODO: measure
-static const int16_t GYRO_BASELINE_GYRO_Y_RAW  =  0;    // TODO: measure
-static const int16_t GYRO_BASELINE_GYRO_Z_RAW  =  0;    // TODO: measure
-static const int16_t GYRO_BASELINE_ACCEL_X_RAW =  0;    // TODO: measure
-static const int16_t GYRO_BASELINE_ACCEL_Y_RAW =  0;    // TODO: measure
-static const int16_t GYRO_BASELINE_ACCEL_Z_RAW =  16384; // Expected: ~16384 (1g flat)
+// Status: auto-updated by gyro_watch.py on 2026-11-19 15:11
+static const int16_t GYRO_BASELINE_GYRO_X_RAW  =  -498;
+static const int16_t GYRO_BASELINE_GYRO_Y_RAW  =  -157;
+static const int16_t GYRO_BASELINE_GYRO_Z_RAW  =  94;
+static const int16_t GYRO_BASELINE_ACCEL_X_RAW =  -1276;
+static const int16_t GYRO_BASELINE_ACCEL_Y_RAW =  -225;
+static const int16_t GYRO_BASELINE_ACCEL_Z_RAW =  12183; // Expected: ~16384 (1g flat)
 
 // ============================================================================
 //  SECTION 4: Stored Calibration Offsets (Load Into Gyroscope::loadCalibration)
@@ -94,17 +94,17 @@ static const int16_t GYRO_BASELINE_ACCEL_Z_RAW =  16384; // Expected: ~16384 (1g
 //  Saves ~2 seconds of recalibration on every boot.
 // ============================================================================
 
-// Status: PLACEHOLDER — replace after running calibration test
+// Status: auto-updated by gyro_watch.py on 2026-11-19 15:11
 static const GyroCalibration STORED_GYRO_CALIBRATION = {
-    /* gyroOffsetX  */  0.0f,     // TODO: fill from calibration output
-    /* gyroOffsetY  */  0.0f,     // TODO: fill from calibration output
-    /* gyroOffsetZ  */  0.0f,     // TODO: fill from calibration output
-    /* accelOffsetX */  0.0f,     // TODO: fill from calibration output
-    /* accelOffsetY */  0.0f,     // TODO: fill from calibration output
-    /* accelOffsetZ */  0.0f,     // TODO: fill from calibration output
-    /* sampleCount  */  0,
-    /* gyroNoiseSigmaZ */ 0.0f,
-    /* isValid      */  false     // Set to true after filling real values
+    /* gyroOffsetX  */  -499.02f,
+    /* gyroOffsetY  */  -157.38f,
+    /* gyroOffsetZ  */  93.11f,
+    /* accelOffsetX */  -1272.80f,
+    /* accelOffsetY */  -227.24f,
+    /* accelOffsetZ */  -4198.71f,
+    /* sampleCount  */  1000,
+    /* gyroNoiseSigmaZ */ 4.896f,
+    /* isValid      */  true     // Set to true after filling real values
 };
 
 // ============================================================================
@@ -132,5 +132,23 @@ static const float CAL_TURN_180_TOLERANCE_DEG = 5.0f;
 
 // Temperature window: calibration is valid within ±5°C of calibration temperature
 static const float CAL_TEMP_WINDOW_C = 5.0f;
+
+// ============================================================================
+//  SECTION 6: Turn Accuracy Results & Heading Scale Factor
+// ----------------------------------------------------------------------------
+//  Written automatically by Arduino_Test/gyroscope_test/gyro_watch.py from
+//  TEST 6 (temperature) and the repeated 90° / 180° manual turn trials
+//  (TEST 7 & 8).
+//
+//  GYRO_HEADING_SCALE_FACTOR = sum(target angles) / sum(measured angles)
+//  over all turn trials. Multiply getHeading() by it to correct the gyro's
+//  scale error (1.0 = no correction).
+// ============================================================================
+static const float GYRO_CAL_TEMPERATURE_C    = 28.26f;
+static const float GYRO_TURN90_MEAN_DEG      = 86.667f;
+static const float GYRO_TURN90_STDDEV_DEG    = 1.980f;
+static const float GYRO_TURN180_MEAN_DEG     = 177.297f;
+static const float GYRO_TURN180_STDDEV_DEG   = 2.188f;
+static const float GYRO_HEADING_SCALE_FACTOR = 1.0229f;
 
 #endif // GYROSCOPE_INITIAL_DATA_H

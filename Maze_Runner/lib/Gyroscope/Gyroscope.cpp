@@ -239,7 +239,10 @@ float Gyroscope::updateHeading() {
         gyroZ_dps = 0.0f;
     }
 
-    _headingDeg += gyroZ_dps * dtSeconds;
+    // MPU-6050 follows the right-hand rule: with the chip mounted Z-up, a
+    // clockwise (viewed from above) rotation reads as NEGATIVE gyroZ.
+    // Negate so the integrated heading is positive for CW turns.
+    _headingDeg -= gyroZ_dps * dtSeconds;
     return _headingDeg;
 }
 
