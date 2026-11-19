@@ -15,16 +15,24 @@
  *    TEST 4: Post-Calibration Noise & Stability Check
  *    TEST 5: Static Drift Test (10 seconds stationary heading)
  *    TEST 6: Temperature Reading & Thermal Check
- *    TEST 7: Manual 90° Turn Accuracy Test (requires physical rotation)
- *    TEST 8: Manual 180° Turn Accuracy Test (requires physical rotation)
+ *    TEST 7: Manual 90° Turn Accuracy Test  (TURN_TRIALS trials, physical rotation)
+ *    TEST 8: Manual 180° Turn Accuracy Test (TURN_TRIALS trials, physical rotation)
  *
  *  How to Use:
  *    1. Place robot on a FLAT, STILL surface (table, not your hand)
  *    2. Flash this file to the Arduino Mega
- *    3. Open Serial Monitor @ 115200 baud
+ *    3. Run the watcher (recommended) instead of the Serial Monitor:
+ *         C:\Users\<you>\.platformio\penv\Scripts\python.exe
+ *             Arduino_Test\gyroscope_test\gyro_watch.py
+ *       It shows the output, forwards your G/S keystrokes, and writes the
+ *       results into lib/Gyroscope/gyroscope_initial_data.h automatically.
+ *       (Or open Serial Monitor @ 115200 baud and copy the values by hand.)
  *    4. Watch tests 1–6 run automatically
- *    5. For tests 7–8, follow the on-screen instructions to rotate the robot
- *    6. Copy the output offset values into gyroscope_initial_data.h
+ *    5. For tests 7–8, follow the on-screen instructions for each trial
+ *
+ *  Machine-readable output:
+ *    Every result the watcher needs is also printed as   @CAL,<KEY>,<VALUE>
+ *    and the run ends with                               @CAL,DONE,1
  * ============================================================================
  */
 
@@ -32,6 +40,9 @@
 #include <Wire.h>
 #include "Gyroscope.h"
 #include "gyroscope_initial_data.h"
+
+// Number of repeated trials for each manual turn test
+static const uint8_t TURN_TRIALS = 5;
 
 // ---------------------------------------------------------------------------
 //  Sensor instance: 0x68 (AD0 LOW), ±250 °/s, ±2g, 44 Hz DLPF
@@ -58,6 +69,7 @@ void recordResult(const char* name, bool pass, const char* note = "") {
         results[resultCount].name   = name;
         results[resultCount].passed = pass;
         strncpy(results[resultCount].notes, note, 63);
+        results[resultCount].notes[63] = '\0';
         resultCount++;
     }
 }
@@ -72,6 +84,41 @@ void printHeader(const char* title) {
     Serial.print(F("  "));
     Serial.println(title);
     Serial.println(F("============================================"));
+}
+
+// ---------------------------------------------------------------------------
+//  Machine-readable output for gyro_watch.py:  @CAL,<KEY>,<VALUE>
+// ---------------------------------------------------------------------------
+void emitCal(const __FlashStringHelper* key, float value, uint8_t decimals) {
+    Serial.print(F("@CAL,")); Serial.print(key); Serial.print(',');
+    Serial.println(value, decimals);
+}
+
+void emitCal(const __FlashStringHelper* key, long value) {
+    Serial.print(F("@CAL,")); Serial.print(key); Serial.print(',');
+    Serial.println(value);
+}
+
+// Key of the form TURN<target>_<stat>, e.g. TURN90_MEAN
+void emitTurnCal(int target, const __FlashStringHelper* stat, float value, uint8_t decimals) {
+    Serial.print(F("@CAL,TURN")); Serial.print(target); Serial.print('_');
+    Serial.print(stat); Serial.print(',');
+    Serial.println(value, decimals);
+}
+
+// ---------------------------------------------------------------------------
+//  Serial input helpers (case-insensitive, ignores newlines)
+// ---------------------------------------------------------------------------
+void flushSerialInput() {
+    while (Serial.available()) Serial.read();
+}
+
+void waitForKey(char key) {
+    while (true) {
+        if (Serial.available() && toupper(Serial.read()) == key) break;
+        delay(10);
+    }
+    flushSerialInput();
 }
 
 // ===========================================================================
@@ -122,6 +169,13 @@ void test2_baselineReading() {
     Serial.print(F("  ACCEL_Y_RAW = ")); Serial.println(sumAY / 100);
     Serial.print(F("  ACCEL_Z_RAW = ")); Serial.println(sumAZ / 100);
 
+    emitCal(F("BASE_GX"), sumGX / 100);
+    emitCal(F("BASE_GY"), sumGY / 100);
+    emitCal(F("BASE_GZ"), sumGZ / 100);
+    emitCal(F("BASE_AX"), sumAX / 100);
+    emitCal(F("BASE_AY"), sumAY / 100);
+    emitCal(F("BASE_AZ"), sumAZ / 100);
+
     // Sanity: accelZ should be close to 16384 (±2g range, flat)
     int16_t avgAZ = sumAZ / 100;
     bool accelOk  = (avgAZ > 14000 && avgAZ < 18000);
@@ -160,12 +214,25 @@ void test3_staticCalibration() {
     Serial.println(F("};"));
 
     // Check offset quality
-    bool gyroZOffsetOk = (abs(cal.gyroOffsetZ) < CAL_MAX_GYRO_OFFSET_LSB * 5); // 5x margin pre-offset
-    bool noiseOk       = (cal.gyroNoiseSigmaZ < CAL_MAX_GYRO_NOISE_SIGMA_LSB * 2);
-    bool pass          = cal.isValid && noiseOk;
+    bool noiseOk = (cal.gyroNoiseSigmaZ < CAL_MAX_GYRO_NOISE_SIGMA_LSB * 2);
+    bool pass    = cal.isValid && noiseOk;
 
     Serial.print(F("GyroZ noise sigma (LSB): ")); Serial.print(cal.gyroNoiseSigmaZ, 3);
     Serial.print(F("  → ")); Serial.println(noiseOk ? F("OK") : F("HIGH NOISE - check vibration"));
+
+    // Only hand the offsets to the watcher if the calibration is usable
+    if (pass) {
+        emitCal(F("OFF_GX"),  cal.gyroOffsetX,  2);
+        emitCal(F("OFF_GY"),  cal.gyroOffsetY,  2);
+        emitCal(F("OFF_GZ"),  cal.gyroOffsetZ,  2);
+        emitCal(F("OFF_AX"),  cal.accelOffsetX, 2);
+        emitCal(F("OFF_AY"),  cal.accelOffsetY, 2);
+        emitCal(F("OFF_AZ"),  cal.accelOffsetZ, 2);
+        emitCal(F("SAMPLES"), (long)cal.sampleCount);
+        emitCal(F("SIGMA_Z"), cal.gyroNoiseSigmaZ, 3);
+    } else {
+        Serial.println(F("Calibration rejected - offsets will NOT be saved."));
+    }
 
     recordResult("Static Calibration", pass,
                  pass ? "Offsets computed" : "High noise or invalid result");
@@ -258,90 +325,120 @@ void test6_temperature() {
     Serial.println(F("  Recalibrate if operating temperature differs by >5°C from"));
     Serial.println(F("  the temperature at calibration time."));
 
+    if (inRange) emitCal(F("TEMP_C"), tempC, 2);
+
     recordResult("Temperature Check", inRange,
                  inRange ? "Temp in normal range" : "Temp out of expected range");
 }
 
 // ===========================================================================
-//  TEST 7: Manual 90° Turn Accuracy
+//  TEST 7 / 8: Manual Turn Accuracy (repeated trials)
 // ===========================================================================
-void test7_turn90() {
-    printHeader("TEST 7: Manual 90° Turn Test");
+
+// Measure one manual turn: integrates heading until the user sends 'S'.
+float measureOneTurn() {
+    gyro.resetHeading();
+    while (true) {
+        gyro.updateHeading();
+        if (Serial.available() && toupper(Serial.read()) == 'S') break;
+        delay(5);
+    }
+    flushSerialInput();
+    return gyro.getHeading();
+}
+
+void runTurnTest(const char* title, const char* resultName,
+                 int targetDeg, float toleranceDeg) {
+    printHeader(title);
     Serial.println(F(""));
     Serial.println(F("INSTRUCTIONS:"));
     Serial.println(F("  1. Place robot on flat surface"));
     Serial.println(F("  2. Mark the robot's start orientation with tape"));
-    Serial.println(F("  3. When prompted, MANUALLY rotate the robot exactly 90°"));
-    Serial.println(F("     (CW = positive heading)"));
-    Serial.println(F("  4. Hold still at the 90° position"));
+    Serial.print  (F("  3. For each of the ")); Serial.print(TURN_TRIALS);
+    Serial.println(F(" trials:"));
+    Serial.println(F("       - line the robot up with the tape mark"));
+    Serial.println(F("       - send 'G', then MANUALLY rotate it CW (CW = positive)"));
+    Serial.print  (F("         by exactly ")); Serial.print(targetDeg); Serial.println(F("°"));
+    Serial.println(F("       - hold still, then send 'S'"));
+    Serial.println(F("  4. Between trials, turn it back to the mark (not measured)"));
     Serial.println(F(""));
-    Serial.println(F("  Sending 'G' in Serial Monitor starts measurement."));
-    Serial.println(F("  Sending 'S' stops it."));
-    Serial.println(F(""));
-    Serial.println(F(">>> Waiting for 'G' to begin..."));
 
-    // Wait for user input
-    while (Serial.read() != 'G') { delay(50); }
-    Serial.read(); // clear buffer
+    float samples[TURN_TRIALS];
 
-    gyro.resetHeading();
-    Serial.println(F("MEASURING... rotate robot 90° CW then send 'S'"));
+    for (uint8_t i = 0; i < TURN_TRIALS; i++) {
+        Serial.print(F(">>> Trial ")); Serial.print(i + 1);
+        Serial.print(F("/"));          Serial.print(TURN_TRIALS);
+        Serial.println(F(": align robot with the mark, then send 'G'"));
+        waitForKey('G');
 
-    while (true) {
-        gyro.updateHeading();
-        if (Serial.available() && Serial.read() == 'S') break;
-        delay(5);
+        Serial.print(F("MEASURING... rotate robot ")); Serial.print(targetDeg);
+        Serial.println(F("° CW then send 'S'"));
+        samples[i] = measureOneTurn();
+
+        Serial.print(F("  Trial ")); Serial.print(i + 1);
+        Serial.print(F(": measured ")); Serial.print(samples[i], 2);
+        Serial.print(F("°  (error "));  Serial.print(samples[i] - targetDeg, 2);
+        Serial.println(F("°)"));
     }
 
-    float measured = gyro.getHeading();
-    float error    = measured - 90.0f;
+    // --- Statistics ---
+    float sum = 0, minV = samples[0], maxV = samples[0];
+    for (uint8_t i = 0; i < TURN_TRIALS; i++) {
+        sum += samples[i];
+        if (samples[i] < minV) minV = samples[i];
+        if (samples[i] > maxV) maxV = samples[i];
+    }
+    float mean = sum / TURN_TRIALS;
 
-    Serial.print(F("  Measured angle (°): ")); Serial.println(measured, 2);
-    Serial.print(F("  Error from 90° (°): ")); Serial.println(error,    2);
+    float sqSum = 0;
+    for (uint8_t i = 0; i < TURN_TRIALS; i++) {
+        float d = samples[i] - mean;
+        sqSum += d * d;
+    }
+    float stddev   = (TURN_TRIALS > 1) ? sqrt(sqSum / (TURN_TRIALS - 1)) : 0.0f;
+    float meanErr  = mean - targetDeg;
+    float worstErr = max(abs(minV - targetDeg), abs(maxV - targetDeg));
+    float scale    = (abs(mean) > 1e-3f) ? (targetDeg / mean) : 1.0f;
 
-    bool pass = (abs(error) < CAL_TURN_90_TOLERANCE_DEG);
-    Serial.print(F("  Within ±")); Serial.print(CAL_TURN_90_TOLERANCE_DEG);
+    printSeparator();
+    Serial.print(F("  Trials           : ")); Serial.println(TURN_TRIALS);
+    Serial.print(F("  Mean angle    (°): ")); Serial.println(mean,     2);
+    Serial.print(F("  Std deviation (°): ")); Serial.println(stddev,   2);
+    Serial.print(F("  Min / Max     (°): ")); Serial.print(minV, 2);
+    Serial.print(F(" / "));                   Serial.println(maxV, 2);
+    Serial.print(F("  Mean error    (°): ")); Serial.println(meanErr,  2);
+    Serial.print(F("  Worst error   (°): ")); Serial.println(worstErr, 2);
+    Serial.print(F("  Scale factor     : ")); Serial.println(scale,    4);
+
+    emitTurnCal(targetDeg, F("N"),    TURN_TRIALS, 0);
+    emitTurnCal(targetDeg, F("MEAN"), mean,   3);
+    emitTurnCal(targetDeg, F("STD"),  stddev, 3);
+    emitTurnCal(targetDeg, F("MIN"),  minV,   3);
+    emitTurnCal(targetDeg, F("MAX"),  maxV,   3);
+
+    bool pass = (abs(meanErr) < toleranceDeg);
+    Serial.print(F("  Mean within ±")); Serial.print(toleranceDeg);
     Serial.print(F("°: ")); Serial.println(pass ? F("PASS") : F("FAIL"));
 
+    // AVR snprintf has no %f support → format floats with dtostrf
+    char meanStr[10], sdStr[10], errStr[10];
+    dtostrf(mean,     1, 1, meanStr);
+    dtostrf(stddev,   1, 2, sdStr);
+    dtostrf(worstErr, 1, 1, errStr);
     char note[64];
-    snprintf(note, 64, "Measured: %.1f deg, Error: %.1f deg", measured, error);
-    recordResult("90° Turn Accuracy", pass, note);
+    snprintf(note, sizeof(note), "Mean %s, SD %s, worst err %s (%u trials)",
+             meanStr, sdStr, errStr, (unsigned)TURN_TRIALS);
+    recordResult(resultName, pass, note);
 }
 
-// ===========================================================================
-//  TEST 8: Manual 180° Turn Accuracy
-// ===========================================================================
+void test7_turn90() {
+    runTurnTest("TEST 7: Manual 90° Turn Test", "90° Turn Accuracy",
+                90, CAL_TURN_90_TOLERANCE_DEG);
+}
+
 void test8_turn180() {
-    printHeader("TEST 8: Manual 180° Turn Test");
-    Serial.println(F("INSTRUCTIONS: Same as Test 7 but rotate 180°."));
-    Serial.println(F("  Send 'G' to begin, 'S' to stop."));
-    Serial.println(F(">>> Waiting for 'G'..."));
-
-    while (Serial.read() != 'G') { delay(50); }
-    Serial.read();
-
-    gyro.resetHeading();
-    Serial.println(F("MEASURING... rotate robot 180° CW then send 'S'"));
-
-    while (true) {
-        gyro.updateHeading();
-        if (Serial.available() && Serial.read() == 'S') break;
-        delay(5);
-    }
-
-    float measured = gyro.getHeading();
-    float error    = measured - 180.0f;
-
-    Serial.print(F("  Measured angle (°): ")); Serial.println(measured, 2);
-    Serial.print(F("  Error from 180°(°): ")); Serial.println(error,    2);
-
-    bool pass = (abs(error) < CAL_TURN_180_TOLERANCE_DEG);
-    Serial.print(F("  Within ±")); Serial.print(CAL_TURN_180_TOLERANCE_DEG);
-    Serial.print(F("°: ")); Serial.println(pass ? F("PASS") : F("FAIL"));
-
-    char note[64];
-    snprintf(note, 64, "Measured: %.1f deg, Error: %.1f deg", measured, error);
-    recordResult("180° Turn Accuracy", pass, note);
+    runTurnTest("TEST 8: Manual 180° Turn Test", "180° Turn Accuracy",
+                180, CAL_TURN_180_TOLERANCE_DEG);
 }
 
 // ===========================================================================
@@ -372,11 +469,13 @@ void printSummary() {
 
     Serial.println(F(""));
     Serial.println(F("NEXT STEPS:"));
-    Serial.println(F("  1. Copy offset values from TEST 3 into gyroscope_initial_data.h"));
-    Serial.println(F("  2. Set STORED_GYRO_CALIBRATION.isValid = true"));
-    Serial.println(F("  3. Remove this test sketch from compilation (rename or move)"));
-    Serial.println(F("  4. In production, call gyro.loadCalibration(STORED_GYRO_CALIBRATION)"));
+    Serial.println(F("  1. If gyro_watch.py was running, gyroscope_initial_data.h is"));
+    Serial.println(F("     already updated. Otherwise copy TEST 3 values in by hand."));
+    Serial.println(F("  2. Remove this test sketch from compilation (rename or move)"));
+    Serial.println(F("  3. In production, call gyro.loadCalibration(STORED_GYRO_CALIBRATION)"));
     Serial.println(F("     instead of runStaticCalibration() to save boot time"));
+
+    emitCal(F("DONE"), 1L);
 }
 
 // ===========================================================================

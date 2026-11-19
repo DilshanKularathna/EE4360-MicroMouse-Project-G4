@@ -161,7 +161,7 @@ public:
     // Call repeatedly in a tight loop (every ~5–10 ms) while turning.
     float updateHeading();
 
-    // Return current integrated heading (degrees, positive = CW for Z-down convention)
+    // Return current integrated heading (degrees, positive = CW viewed from above; sensor mounted Z-up)
     float getHeading() const { return _headingDeg; }
 
     // =========================================================================
