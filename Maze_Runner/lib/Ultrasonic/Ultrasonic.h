@@ -11,7 +11,6 @@ bool isPathClearFront();
 bool isWallOnRight();
 bool isWallOnLeft();
 float readUltrasonic(int trigPin, int echoPin);
-float calibrateDistance(float rawDist, int trigPin);
 void readAllSensors();
 
 #endif // ULTRASONICS_H

@@ -3,40 +3,39 @@
 
 #include <Arduino.h>
 
-class MotorDriver {
-private:
-    uint8_t leftRpwm, leftLpwm;
-    uint8_t rightRpwm, rightLpwm;
-    uint8_t enablePin;
-    uint8_t leftEncA, leftEncB;
-    uint8_t rightEncA, rightEncB;
+// void setMotors(int leftSpeed, int rightSpeed);
+// void stopMotors();
 
-public:
-    MotorDriver(uint8_t lRpwm, uint8_t lLpwm, 
-                uint8_t rRpwm, uint8_t rLpwm, 
-                uint8_t enPin,
-                uint8_t lEncA, uint8_t lEncB, 
-                uint8_t rEncA, uint8_t rEncB);
+// float readUltrasonic(int trig, int echo);
+// void  readAllSensors();
 
-    void begin();
-    
-    // Raw speed outputs (-255 to 255)
-    void setSpeeds(int leftSpeed, int rightSpeed);
-    void stop();
+// void leftEncoderISR();
+// void rightEncoderISR();
+// void resetEncoders();
+// void moveDistanceCM(float distanceCM, int speed);
+// void turnDegrees(float degrees, int speed);
+void turnLeft();
+void turnRight();
+void turnAround();
+void turnDegrees(float degrees);
 
-    // Encoder management
-    void resetEncoders();
-    long getLeftPulses();
-    long getRightPulses();
-
-    // Controlled closed-loop movements using Encoders & PI controller
-    void moveCells(float numCells, int basePwm = 70);
-    void turnRight90(int basePwm = 70);
-    void turn180(int basePwm = 70);
-
-    // Static ISR Callback Routines
-    static void handleLeftEncoder();
-    static void handleRightEncoder();
+struct TurnResult {
+    float finalError;       // deg, after the robot has stopped
+    float overshoot;        // deg past the target (0 if none)
+    unsigned long timeMs;
+    bool timedOut;
 };
+TurnResult turnDegreesWith(float degrees, float kp, int minDuty, int maxDuty);
 
+// Optional: called every loop of a turn (for plotting/debugging). nullptr = off.
+extern void (*turnLogHook)(float yaw, float err, int duty);
+
+void resetEncoders();
+void setMotors(int leftSpeed, int rightSpeed);
+void moveDistanceCM(float distanceCM, int speed);
+void stopMotors();
+void initEncoders();     // call once in setup(): pins + 4x quadrature interrupts
+void leftEncoderISR();
+void rightEncoderISR();
+void setPWM(uint8_t pin, uint32_t freq, uint8_t dutyCycle);
 #endif // MOTOR_DRIVER_H
