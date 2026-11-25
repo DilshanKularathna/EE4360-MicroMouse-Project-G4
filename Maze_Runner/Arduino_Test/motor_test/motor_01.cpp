@@ -12,14 +12,8 @@ void setup()
     pinMode(PIN_LEFT_RPWM, OUTPUT);
     pinMode(PIN_LEFT_LPWM, OUTPUT);
 
-    pinMode(PIN_LEFT_ENC_A, INPUT_PULLUP);
-    pinMode(PIN_LEFT_ENC_B, INPUT_PULLUP);
-    pinMode(PIN_RIGHT_ENC_A, INPUT_PULLUP);
-    pinMode(PIN_RIGHT_ENC_B, INPUT_PULLUP);
-
-    // Attach hardware interrupts for quadrature encoders
-    attachInterrupt(digitalPinToInterrupt(PIN_LEFT_ENC_A), leftEncoderISR, RISING);
-    attachInterrupt(digitalPinToInterrupt(PIN_RIGHT_ENC_A), rightEncoderISR, RISING);
+    // Quadrature encoders (4x decoding)
+    initEncoders();
 
     Serial.println("--- 90-Degree Turn Test ---");
     Serial.println("Starting in 3 seconds...");

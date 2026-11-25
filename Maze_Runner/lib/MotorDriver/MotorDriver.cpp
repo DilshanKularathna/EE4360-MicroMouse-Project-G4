@@ -4,10 +4,21 @@
 #include "MotorDriver.h"
 #include "Ultrasonic.h"
 #include "globals.h"
+#include "Gyro.h"
 
 // // Global pulse counters required for ISR access
-volatile long leftEncoderCount  = 0;
+volatile long leftEncoderCount = 0;
 volatile long rightEncoderCount = 0;
+
+// Define and initialize the variables in memory
+bool isMovingForward = false;
+bool isTurning = false;
+float integralError = 0.0f;
+float lastError = 0.0f;
+
+float frontDistance = 0.0f;
+float leftDistance = 0.0f;
+float rightDistance = 0.0f;
 int currentHeading = NORTH;
 
 // ================================================================
@@ -36,42 +47,102 @@ void turnAround() {
     currentHeading = (currentHeading + 2) % 4;
 }
 
-void turnDegrees(float degrees) { // + value turns right, - value turns left
+void (*turnLogHook)(float yaw, float err, int duty) = nullptr;
+
+static long encoderTicks() {
+    long l, r;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        l = leftEncoderCount;
+        r = rightEncoderCount;
+    }
+    return (labs(l) + labs(r)) / 2;
+}
+
+static void spin(float direction, int duty) {   // direction > 0 = right
+    if (direction > 0) setMotors(duty, -duty);
+    else               setMotors(-duty, duty);
+}
+
+// Keeps both wheels at the same tick count so the robot pivots on its centre.
+static void spinBalanced(float direction, int duty, int maxDuty) {
+    long l, r;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        l = leftEncoderCount;
+        r = rightEncoderCount;
+    }
+    float diff = TURN_BALANCE_GAIN * (labs(l) - labs(r));   // > 0: left wheel ahead
+    int dl = constrain((int)(duty - diff), 0, maxDuty + 5);
+    int dr = constrain((int)(duty + diff), 0, maxDuty + 5);
+
+    if (direction > 0) setMotors(dl, -dr);
+    else               setMotors(-dl, dr);
+}
+
+// Fallback when the gyro is not available: stop at the calibrated tick count.
+static void turnByEncoders(float degrees) {
+    long target = (degrees > 0) ? (long)TICKS_PER_90_DEG : (long)TICKS_PER_90_LEFT;
     resetEncoders();
+    spin(degrees, TURN_SPEED);
+    unsigned long start = millis();
+    while (encoderTicks() < target && millis() - start < 5000) {}
+    stopMotors();
+    delay(300);
+}
 
-    float wheelCircumference = 3.14159f * WHEEL_DIAMETER_CM;
-    float distancePerWheel   = (3.14159f * WHEELBASE_CM * fabs(degrees)) / 360.0f;
+// In-place turn. + = right, - = left.
+// Closed loop on the gyro: slows down near the target and corrects overshoot.
+// The calibrated tick count is used as a safety limit.
+TurnResult turnDegreesWith(float degrees, float kp, int minDuty, int maxDuty) {
+    TurnResult res = {0.0f, 0.0f, 0, false};
+    unsigned long start = millis();
 
-    long targetCounts =
-        (long)(0.5f * ((distancePerWheel / wheelCircumference) * ENCODER_COUNTS_PER_REV));
-
-    if (fabs(degrees) > 170.0f) {
-        targetCounts = (long)(targetCounts * 1.03f);
+    if (!gyroReady()) {
+        turnByEncoders(degrees);
+        res.timeMs = millis() - start;
+        return res;
     }
 
-    long lCount = 0;
-    long rCount = 0;
+    float ticks90  = (degrees > 0) ? TICKS_PER_90_DEG : TICKS_PER_90_LEFT;
+    long tickLimit = (long)(1.5f * ticks90 * fabs(degrees) / 90.0f);
+    float dir      = (degrees > 0) ? 1.0f : -1.0f;
+    resetEncoders();
+    float startYaw = gyroYaw();   // yaw is not reset, so the heading stays absolute
 
-    while (abs(lCount) < targetCounts || abs(rCount) < targetCounts) {
-        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            lCount = leftEncoderCount;
-            rCount = rightEncoderCount;
+    while (true) {
+        if (millis() - start >= 6000 || encoderTicks() >= tickLimit) {
+            res.timedOut = true;
+            break;
         }
 
-        if (degrees > 0) {
-            setPWM(PIN_LEFT_RPWM, 20000, TURN_SPEED);
-            setPWM(PIN_LEFT_LPWM, 20000, 0);
-            setPWM(PIN_RIGHT_RPWM, 20000, 0);
-            setPWM(PIN_RIGHT_LPWM, 20000, TURN_SPEED);
-        } else {
-            setPWM(PIN_LEFT_RPWM, 20000, 0);
-            setPWM(PIN_LEFT_LPWM, 20000, TURN_SPEED);
-            setPWM(PIN_RIGHT_RPWM, 20000, TURN_SPEED);
-            setPWM(PIN_RIGHT_LPWM, 20000, 0);
+        gyroUpdate();
+        float yaw  = gyroYaw() - startYaw;               // angle turned so far
+        float past = dir * (yaw - degrees);              // > 0 = past the target
+        if (past > res.overshoot) res.overshoot = past;
+
+        float err = degrees - yaw;
+        if (fabs(err) <= TURN_TOLERANCE_DEG) {
+            stopMotors();
+            unsigned long t = millis();
+            while (millis() - t < 150) gyroUpdate();      // check it has not coasted past
+            if (fabs(degrees - (gyroYaw() - startYaw)) <= TURN_TOLERANCE_DEG) break;
+            continue;
         }
+
+        int duty = constrain((int)(kp * fabs(err)), minDuty, maxDuty);
+        if (turnLogHook) turnLogHook(yaw, err, duty);
+        spinBalanced(err, duty, maxDuty);
     }
     stopMotors();
-    delay(500);
+    res.timeMs = millis() - start;
+
+    unsigned long t = millis();
+    while (millis() - t < 300) gyroUpdate();              // include coasting in the error
+    res.finalError = degrees - (gyroYaw() - startYaw);
+    return res;
+}
+
+void turnDegrees(float degrees) {
+    turnDegreesWith(degrees, TURN_KP, TURN_MIN_DUTY, TURN_SPEED);
 }
 
 void setMotors(int leftSpeed, int rightSpeed) { // Set + value for forward, - value for backward
@@ -148,18 +219,62 @@ void stopMotors() {
     setPWM(PIN_RIGHT_LPWM, 20000, 0);
 }
 
+// ================================================================
+// ENCODERS - 4x quadrature decoding
+// Both channels (A and B) trigger the ISR on every edge (CHANGE), so
+// each full encoder cycle gives 4 counts.
+//
+// State = (A << 1) | B. Forward sequence: 01 -> 11 -> 10 -> 00 -> 01.
+// Table index = (previousState << 2) | currentState.
+// +1 = one step forward, -1 = one step backward, 0 = no change / invalid.
+// ================================================================
+static const int8_t QUAD_DELTA[16] = {
+     0, +1, -1,  0,
+    -1,  0,  0, +1,
+    +1,  0,  0, -1,
+     0, -1, +1,  0
+};
+
+static volatile uint8_t leftPrevState  = 0;
+static volatile uint8_t rightPrevState = 0;
+
+static inline uint8_t readLeftState() {
+    return (digitalRead(PIN_LEFT_ENC_A) << 1) | digitalRead(PIN_LEFT_ENC_B);
+}
+
+static inline uint8_t readRightState() {
+    return (digitalRead(PIN_RIGHT_ENC_A) << 1) | digitalRead(PIN_RIGHT_ENC_B);
+}
+
+// Call once in setup(): configures the pins and attaches both channels of
+// both encoders to the interrupts.
+void initEncoders() {
+    pinMode(PIN_LEFT_ENC_A,  INPUT_PULLUP);
+    pinMode(PIN_LEFT_ENC_B,  INPUT_PULLUP);
+    pinMode(PIN_RIGHT_ENC_A, INPUT_PULLUP);
+    pinMode(PIN_RIGHT_ENC_B, INPUT_PULLUP);
+
+    leftPrevState  = readLeftState();
+    rightPrevState = readRightState();
+
+    attachInterrupt(digitalPinToInterrupt(PIN_LEFT_ENC_A),  leftEncoderISR,  CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_LEFT_ENC_B),  leftEncoderISR,  CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_RIGHT_ENC_A), rightEncoderISR, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_RIGHT_ENC_B), rightEncoderISR, CHANGE);
+}
+
+// The left motor is mounted mirrored, so its count is inverted
+// to make "robot forward" positive for both wheels.
 void leftEncoderISR() {
-    if (digitalRead(PIN_LEFT_ENC_B) == HIGH)
-        leftEncoderCount--;
-    else
-        leftEncoderCount++;
+    uint8_t curr = readLeftState();
+    leftEncoderCount -= QUAD_DELTA[(leftPrevState << 2) | curr];
+    leftPrevState = curr;
 }
 
 void rightEncoderISR() {
-    if (digitalRead(PIN_RIGHT_ENC_B) == HIGH)
-        rightEncoderCount++;
-    else
-        rightEncoderCount--;
+    uint8_t curr = readRightState();
+    rightEncoderCount += QUAD_DELTA[(rightPrevState << 2) | curr];
+    rightPrevState = curr;
 }
 
 // Dont change, Bare Metal for PWM Generation
