@@ -5,6 +5,15 @@
 #include "MotorDriver.h"
 #include "globals.h"
 #include "Gyro.h"
+#include "LineFollower.h"
+
+// 1 = watch the IR array during moves for the special cell (white strip / black square /
+// white strip). When found, the move stops and line mode runs. Test first with env:line_mode_test.
+#ifndef LINE_MODE
+#define LINE_MODE 0
+#endif
+bool  lineModePending = false;
+float mazeOdoCm       = 0.0f;   // distance driven in straight moves, kept across cells
 
 // ================================================================
 // CONSTANTS
@@ -15,6 +24,24 @@ const long TARGET_TICKS_FWD = (long)TICKS_PER_CELL_25CM;
 #define AUTOTUNE_WALLS 0   // 1 = run the wall-centring autotune in a straight corridor instead of solving
 #define TUNE_START_SET 0   // first set to run (0-11): use it to continue after a crash
 #define TUNE_MOVES 4       // cells to drive each way (the end wall stops it early if the corridor is shorter)
+
+// ---- Straight-line tuning stages (guide: Doc/straight_tuning.md) ----
+// Set from platformio.ini (env tune1_distance ... tune4_walls) or change the default here.
+// 0 = normal maze run
+// 1 = distance only: no steering at all, measure the distance with a tape
+// 2 = encoders only: keep the left and right tick counts equal (ENC_SYNC_KP)
+// 3 = gyro only: hold the start heading (HEADING_KP, HEADING_KD), side walls ignored
+// 4 = gyro + side walls: the same steering as the maze run, in a straight corridor
+// In stages 1-4 every run starts with the hand signal and drives TUNE_CELLS cells.
+#ifndef TUNE_STAGE
+#define TUNE_STAGE 0
+#endif
+#ifndef TUNE_CELLS
+#define TUNE_CELLS 1
+#endif
+#define STEER_WALLS (TUNE_STAGE == 0 || TUNE_STAGE == 4)
+#define STEER_GYRO  (TUNE_STAGE == 0 || TUNE_STAGE == 3 || TUNE_STAGE == 4)
+#define STEER_ENC   (TUNE_STAGE == 2)
 
 bool          started = false;
 unsigned long t0      = 0;
@@ -101,6 +128,7 @@ float headingRef = 0.0f;   // absolute heading target (deg, multiple of 90, righ
 
 // Turns so the heading lands on an exact multiple of 90 degrees (no drift build-up).
 void turnBy(float delta) {
+    if (LINE_MODE) markerReset();   // a new direction: start the pattern again
     currentHeading = (currentHeading + 4 + (int)(delta / 90.0f)) % 4;
     if (!gyroReady()) {
         turnDegrees(delta);
@@ -111,6 +139,18 @@ void turnBy(float delta) {
 }
 
 void navigateStep() {
+    // Special cell found (or the last move ended in the middle of its pattern)
+    if (LINE_MODE && (lineModePending || markerState() == MARKER_STARTED)) {
+        lineModePending = false;
+        Serial.println("Special cell -> line mode");
+        LineModeResult r = runLineMode(true);
+        markerReset();
+        Serial.print("Line mode done: ");
+        Serial.println(lineModeResultName(r));
+        // TODO: after the line section the robot is not on a cell centre / 90 deg heading.
+        // Re-align (front wall / gyro headingRef) here before maze solving continues.
+    }
+
     if (gyroReady()) gyroCalibrate(100);   // robot is still: refresh the gyro bias
     readAllSensors();
 
@@ -179,6 +219,9 @@ float statSumYaw2 = 0.0f;   // sum of heading deviation^2 (deg^2)
 int   statN       = 0;
 int   statClose   = 0;      // samples with a wall closer than 1 cm
 
+long lastMoveL = 0, lastMoveR = 0;   // encoder counts at the end of the last move
+void waitForHandSignal();
+
 float median3(const float *v) {
     float a = v[0], b = v[1], c = v[2];
     if (a > b) { float t = a; a = b; b = t; }
@@ -212,6 +255,7 @@ void moveForwardPID() {
     bool  wallLPrev  = lBuf[2] < WALL_THRESHOLD;
     bool  wallRPrev  = rBuf[2] < WALL_THRESHOLD;
     bool  edgeDone   = false;
+    unsigned long lastIrCheck = 0;
 
     while (!reached) {
         if (millis() - startTime > 4000)
@@ -276,7 +320,7 @@ void moveForwardPID() {
                 wallRPrev = wallRNow;
 
                 float wallErr = wallError(l, r);
-                if (gyroReady())   // the walls only nudge the heading target
+                if (STEER_WALLS && gyroReady())   // the walls only nudge the heading target
                     desiredYaw = headingRef + constrain(-wallYawGain * wallErr, -maxWallYaw, maxWallYaw);
 
                 if (sensorTurn == 2 && (l < WALL_THRESHOLD || r < WALL_THRESHOLD)) {
@@ -286,11 +330,19 @@ void moveForwardPID() {
                     statN++;
                     if (l < 1.0f || r < 1.0f) statClose++;
                 }
-                else
+                else if (STEER_WALLS)
                     steeringAdjustment = constrain(WALL_STEER_GAIN * wallErr, -5.0f, 5.0f);
 
                 if (LOG_MOVE == 1 && sensorTurn == 2) {          // text, for the log file
-                    Serial.print("mv L="); Serial.print(l, 1);
+                    long lp, rp;
+                    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+                        lp = leftEncoderCount;
+                        rp = rightEncoderCount;
+                    }
+                    Serial.print("mv cm="); Serial.print((lp + rp) / 2.0f / TICKS_PER_CM, 1);
+                    Serial.print(" LR=");   Serial.print(lp - rp);
+                    Serial.print(" st=");   Serial.print(steeringAdjustment, 1);
+                    Serial.print(" L=");    Serial.print(l, 1);
                     Serial.print(" R=");   Serial.print(r, 1);
                     Serial.print(" werr=");   Serial.print(wallErr, 1);
                     Serial.print(" desYaw="); Serial.print(desiredYaw - headingRef, 1);
@@ -307,8 +359,10 @@ void moveForwardPID() {
         }
 
         if (gyroReady()) {   // the gyro holds that heading on every loop
-            gyroUpdate();
-            steeringAdjustment = constrain(headingKp * (gyroYaw() - desiredYaw), -5.0f, 5.0f);
+            gyroUpdate();    // always, so the heading stays right for the next turn and the log
+            if (STEER_GYRO)
+                steeringAdjustment = constrain(headingKp * (gyroYaw() - desiredYaw) + HEADING_KD * gyroRate(),
+                                               -5.0f, 5.0f);
         }
 
         long  currT  = micros();
@@ -323,12 +377,32 @@ void moveForwardPID() {
             rightPos = rightEncoderCount;
         }
 
-        float eL    = (float)targetL - (float)leftPos;
+        if (LINE_MODE && micros() - lastIrCheck >= 3000) {   // marker check every 3 ms
+            lastIrCheck = micros();
+            if (markerUpdate(mazeOdoCm + (leftPos + rightPos) / 2.0f / TICKS_PER_CM) == MARKER_FOUND) {
+                Serial.println("Special cell found - stopping the move");
+                lineModePending = true;
+                reached = true;
+                stopMotors();
+                break;
+            }
+        }
+
+#if STEER_ENC
+        // Left wheel ahead = robot turning right -> positive = steer left
+        steeringAdjustment = constrain(ENC_SYNC_KP * (float)(leftPos - rightPos), -5.0f, 5.0f);
+#endif
+
+        // Distance uses the AVERAGE of both wheels. With a separate target per wheel, the wheel
+        // that got ahead (because of steering) stopped first and the other one caught up,
+        // spinning the robot at the end of every move and undoing the steering.
+        float eAvg  = ((float)(targetL + targetR) - (float)(leftPos + rightPos)) / 2.0f;
+        float eL    = eAvg;
         float dedtL = (eL - eprevL) / deltaT;
         eintegralL += eL * deltaT;
         float uL = kpL * eL + kdL * dedtL + kiL * eintegralL;
 
-        float eR    = (float)targetR - (float)rightPos;
+        float eR    = eAvg;
         float dedtR = (eR - eprevR) / deltaT;
         eintegralR += eR * deltaT;
         float uR = kpR * eR + kdR * dedtR + kiR * eintegralR;
@@ -341,8 +415,10 @@ void moveForwardPID() {
         if (pwrR > MAX_DUTY)
             pwrR = MAX_DUTY;
 
-        pwrL -= steeringAdjustment;
-        pwrR += steeringAdjustment;
+        // When a wheel runs backwards (overshoot), the steering has to be flipped for it,
+        // otherwise it turns the robot the wrong way
+        pwrL -= (uL > 0) ? steeringAdjustment : -steeringAdjustment;
+        pwrR += (uR > 0) ? steeringAdjustment : -steeringAdjustment;
 
         if (pwrL > MAX_DUTY + 5)
             pwrL = MAX_DUTY + 5;
@@ -370,7 +446,73 @@ void moveForwardPID() {
         eprevR = eR;
     }
     stopMotors();
-    delay(200);
+
+    unsigned long t = millis();
+    while (millis() - t < 200)              // let it settle; keep the gyro running to catch coasting
+        if (gyroReady()) gyroUpdate();
+
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        lastMoveL = leftEncoderCount;
+        lastMoveR = rightEncoderCount;
+    }
+    mazeOdoCm += (lastMoveL + lastMoveR) / 2.0f / TICKS_PER_CM;
+    if (LOG_MOVE) {
+        Serial.print("move done: L=");  Serial.print(lastMoveL);
+        Serial.print(" R=");            Serial.print(lastMoveR);
+        Serial.print(" LR=");           Serial.print(lastMoveL - lastMoveR);
+        Serial.print(" gyro=");         Serial.print(gyroYaw() - headingRef, 1);
+        Serial.print(" ms=");           Serial.print(millis() - startTime);
+        Serial.println(reached ? "" : " (TIMEOUT)");
+    }
+}
+
+// Stages 1-4: one test run per hand signal, then a summary line.
+void stageRun() {
+    static int run = 0;
+    waitForHandSignal();
+    if (gyroReady()) gyroCalibrate();   // robot is still: fresh bias
+    gyroResetYaw();
+    headingRef = 0.0f;                  // straight ahead = the way you placed it
+    statSumErr2 = statSumYaw2 = 0.0f;
+    statN = statClose = 0;
+
+    readAllSensors();
+    Serial.print("start L="); Serial.print(leftDist, 1);
+    Serial.print(" F=");      Serial.print(frontDist, 1);
+    Serial.print(" R=");      Serial.println(rightDist, 1);
+
+    long sumL = 0, sumR = 0;
+    int  cells = 0;
+    float maxYaw = 0.0f;
+    for (int c = 0; c < TUNE_CELLS; c++) {
+        if (c > 0) readAllSensors();
+        if (frontDist > 0.1f && frontDist <= FRONT_TARGET_CM + FRONT_SLOW_CM) {
+            Serial.println("End wall reached.");
+            break;
+        }
+        moveForwardPID();
+        sumL += lastMoveL;
+        sumR += lastMoveR;
+        cells++;
+        if (fabs(gyroYaw()) > maxYaw) maxYaw = fabs(gyroYaw());
+    }
+
+    run++;
+    Serial.print("RESULT run=");  Serial.print(run);
+    Serial.print(" stage=");      Serial.print(TUNE_STAGE);
+    Serial.print(" cells=");      Serial.print(cells);
+    Serial.print(" L=");          Serial.print(sumL);
+    Serial.print(" R=");          Serial.print(sumR);
+    Serial.print(" LR=");         Serial.print(sumL - sumR);
+    Serial.print(" encCm=");      Serial.print((sumL + sumR) / 2.0f / TICKS_PER_CM, 1);
+    Serial.print(" gyroEnd=");    Serial.print(gyroYaw(), 1);
+    Serial.print(" gyroMaxEnd="); Serial.print(maxYaw, 1);
+    if (statN > 0) {
+        Serial.print(" rmsWallErr="); Serial.print(sqrt(statSumErr2 / statN), 2);
+        Serial.print(" closeFrac=");  Serial.print((float)statClose / statN, 2);
+    }
+    Serial.println();
+    Serial.println("Now measure: distance driven (cm) and sideways drift from the start line (cm).");
 }
 
 // Wall-centring autotune, one set at a time. Needs a straight corridor with walls on
@@ -480,6 +622,7 @@ void setup() {
     delay(1000);
 
     initEncoders();
+    if (LINE_MODE) lineBegin();
 
     if (!gyroBegin()) {
         Serial.println("MPU-6050 NOT FOUND: no heading hold, encoder turns");
@@ -509,10 +652,26 @@ void setup() {
     Serial.println("Priority: Left -> Right -> Front");
     Serial.println("========================================");
 
+    if (TUNE_STAGE != 0) {
+        Serial.print("TUNE STAGE ");     Serial.print(TUNE_STAGE);
+        Serial.print("  cells=");        Serial.print(TUNE_CELLS);
+        Serial.print("  ticks/cell=");   Serial.print(TICKS_PER_CELL_25CM, 0);
+        Serial.print("  kpL=");          Serial.print(kpL, 2);
+        Serial.print("  kpR=");          Serial.print(kpR, 2);
+        Serial.print("  encSyncKp=");    Serial.print(ENC_SYNC_KP, 3);
+        Serial.print("  headKp=");       Serial.print(headingKp, 2);
+        Serial.print("  headKd=");       Serial.print(HEADING_KD, 3);
+        Serial.print("  wallYawGain=");  Serial.print(wallYawGain, 1);
+        Serial.print("  maxWallYaw=");   Serial.println(maxWallYaw, 1);
+        if (TUNE_STAGE >= 3 && !gyroReady()) Serial.println("WARNING: no gyro - stage 3/4 will not steer");
+        return;
+    }
+
     if (AUTOTUNE_WALLS) runWallAutotune();
 }
 
 void loop() {
+    if (TUNE_STAGE != 0) { stageRun(); return; }
     if (AUTOTUNE_WALLS) return;   // autotune runs once in setup()
 
     if (!started && millis() - t0 >= 3000) {

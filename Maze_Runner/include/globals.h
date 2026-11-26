@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 #define TURN_SPEED 30
-const float MAX_DUTY = 28.0f;
+const float MAX_DUTY = 35.0f;
 
 extern volatile long leftEncoderCount; // LeftEncodeISR() in MotorDriver.cpp
 extern volatile long rightEncoderCount; // RightEncodeISR() in MotorDriver.cpp

@@ -16,29 +16,47 @@
 #define PIN_LEFT_ENC_B      19
 
 // --- IR Sensor Array Pins ---
-#define PIN_IR_EN            49
-const uint8_t IR_PINS[8] = {A15, A14, A13, A12, A11, A10, A9, A8};
+#define PIN_IR_EN            52
+const uint8_t IR_PINS[8] = {A7, A6, A5, A4, A3, A2, A1, A0};   // [0] = robot's right most, [7] = left most
 #define NUM_IR_SENSORS       8
 
-// Default Thresholds (Updated via calibration utility)
-const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
+// IR calibration (from ir_02.cpp 'c' command, pins A7..A0). Raw reads HIGH on black.
+const int WHITE_VALUES[8] = {805, 722, 731, 733, 720, 727, 743, 740};
+const int BLACK_VALUES[8] = {1022, 1017, 1020, 1019, 1017, 1016, 1018, 1017};
 
-// Calibrated Values (From line_follower_test.ino)
-const int WHITE_VALUES[8] = {288, 158, 195, 324, 382, 516, 492, 460};
-const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
+// Line follower (tuned in ir_02.cpp). Speeds are on the 0-255 analogWrite scale used
+// there; the LineFollower library converts them to duty % for setMotors().
+#define LINE_BASE_PWM        95
+#define LINE_MAX_PWM         100
+#define LINE_KP              0.025f
+#define LINE_KI              0.000f
+#define LINE_KD              0.053f
+#define LINE_SENSOR_EXPONENT 2.5f
+#define LINE_LOST_SUM        200     // total normalised value below this = line lost
+#define LINE_IS_WHITE        0       // 0 = black line on white (as tuned), 1 = white line on black
 
-// Default PID Parameters
-#define DEFAULT_BASE_PWM    100
-#define DEFAULT_MAX_PWM     120
-#define DEFAULT_KP          0.030f
-#define DEFAULT_KI          0.000f
-#define DEFAULT_KD          0.100f
+// Marker cell + line mode (LineFollower library). Maze floor is black. Seen while driving,
+// the special cell is: WHITE strip ~3.5 cm -> BLACK square ~12 cm -> WHITE strip ~3.5 cm
+// -> small black part -> black line starts. Lengths are measured with the encoders.
+#define MARKER_FULL_SENSORS  6       // this many sensors the same colour = a full-width band
+#define MARKER_W_MIN_CM      2.0f    // white strip length limits (nominal 3.5 cm)
+#define MARKER_W_MAX_CM      6.0f
+#define MARKER_B_MIN_CM      8.0f    // black square length limits (nominal 12 cm)
+#define MARKER_B_MAX_CM      16.0f
+#define MARKER_W2_CONFIRM_CM 1.5f    // second white strip seen this long = marker found
+#define MARKER_FINISH_MAX_CM 30.0f   // a move ended mid-pattern: drive at most this far to finish it
+#define LINE_SEARCH_DUTY     20      // duty % used to drive straight while looking for the line
+#define LINE_SEARCH_MAX_CM   60.0f   // give up if no line is found within this distance
+#define LINE_FOUND_CM        1.0f    // line pattern must last this long to count as found
+#define LINE_END_SENSORS     6       // this many sensors black = back on the black maze floor
+#define LINE_END_CM          3.0f    // ...for at least this distance = end of the line section
+#define LINE_LOST_MS         400     // line lost (all white) this long = stop line mode
 
 // Motor and encoder calibration (4x decoding)
 #define ENCODER_COUNTS_PER_REV   897
 #define WHEEL_DIAMETER_CM        6.43f
 #define WHEELBASE_CM             18.5f        // centre to centre of the wheels (measured)
-const float TICKS_PER_CELL_25CM  = 1111.0f;
+const float TICKS_PER_CELL_25CM  = 1134.0f;   // was 1111: drove 24.5 cm (rechecked 2026-11-26)
 #define RIGHT_DUTY_TRIM          0.9768f
 #define MIN_DUTY_LEFT            16
 #define MIN_DUTY_RIGHT           13
@@ -75,8 +93,10 @@ static const float CM_PER_COUNT = (3.14159f * WHEEL_DIAMETER_CM / ENCODER_COUNTS
 #define EDGE_CORRECTION 0           // 1 = finish moves using side-wall edges (off: ultrasonic edges are +-5 cm)
 #define FRONT_ALIGN_DUTY 20      // duty used to square up on a front wall
 #define WALL_STEER_GAIN 2.0f     // duty % per cm of side error (used without the gyro)
-#define HEADING_KP 1.5f          // duty % per degree of heading error (gyro, autotuned)
-#define WALL_YAW_GAIN 3.0f       // degrees of heading offset per cm of wall error (autotuned)
+#define HEADING_KP 2.0f          // duty % per degree of heading error (gyro, autotuned)
+#define HEADING_KD 0.0f          // duty % per deg/s of turn rate (gyro): damps wobble, 0 = off
+#define ENC_SYNC_KP 0.1f         // tuning stage 2: duty % per tick of left-right difference
+#define WALL_YAW_GAIN 1.5f       // degrees of heading offset per cm of wall error (autotuned)
 #define MAX_WALL_YAW 10.0f       // limit on that offset (degrees, autotuned)
 
 // --- Ultrasonic Sensor Pins ---

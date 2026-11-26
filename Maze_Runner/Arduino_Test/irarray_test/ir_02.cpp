@@ -1,38 +1,28 @@
 #include <Arduino.h>
+#include "config.h"
 
 // ==========================================
-// PIN DEFINITIONS
+// PIN DEFINITIONS -> all taken from config.h
 // ==========================================
-// IR Sensors (8-Channel Array)
-#define IR0 A15
-#define IR1 A14
-#define IR2 A13
-#define IR3 A12
-#define IR4 A11
-#define IR5 A10
-#define IR6 A9
-#define IR7 A8
-#define IR_EN 49
+// IR sensors : IR_PINS[0..7] (index 0 = robot's right most), PIN_IR_EN
+// Motors     : PIN_RIGHT_RPWM, PIN_RIGHT_LPWM, PIN_LEFT_RPWM, PIN_LEFT_LPWM
+//
+// Serial commands (type a letter + ENTER, 115200 baud):
+//   c  calibrate: slide the robot by hand across the line for 6 s (motors off)
+//   r  live view: raw / normalised / position / motor speeds (motors off)
+//   g  run the line follower (any key stops)
+//   o  go back to the original calibration values below
+//   p  print the calibration values in use
 
-// RIGHT MOTOR (IBT-2 / BTS7960)
-const int RIGHT_RPWM  = 4;
-const int RIGHT_LPWM  = 6;
-const int RIGHT_ENC_A = 2; // Interrupt 0
-const int RIGHT_ENC_B = 3; // Interrupt 1
-
-// LEFT MOTOR (IBT-2 / BTS7960)
-const int LEFT_RPWM   = 9;
-const int LEFT_LPWM   = 8;
-const int LEFT_ENC_A  = 18; // Interrupt 5
-const int LEFT_ENC_B  = 19; // Interrupt 4
-
-#define NUM_SENSORS 8
+#define NUM_SENSORS NUM_IR_SENSORS
 
 // ==========================================
 // NEW CALIBRATION VALUES FROM IMAGE
 // ==========================================
-const int whiteValues[NUM_SENSORS] = {788, 776, 747, 734, 742, 741, 728, 802};
-const int blackValues[NUM_SENSORS] = {976, 975, 974, 971, 974, 980, 978, 978};
+const int ORIGINAL_WHITE[NUM_SENSORS] = {805, 722, 731, 733, 720, 727, 743, 740};
+const int ORIGINAL_BLACK[NUM_SENSORS] = {1022, 1017, 1020, 1019, 1017, 1016, 1018, 1017};
+int whiteValues[NUM_SENSORS];   // values in use (start as the originals, 'c' replaces them)
+int blackValues[NUM_SENSORS];
 
 // Global Arrays & Variables
 int rawSensors[NUM_SENSORS];
@@ -41,7 +31,7 @@ int normalizedSensors[NUM_SENSORS];
 // ==========================================
 // SPEED & PID TUNING PARAMETERS
 // ==========================================
-const int BASE_PWM = 30;    // Forward cruising speed
+const int BASE_PWM = 95;    // Forward cruising speed
 const int MAX_PWM  = 100;   // Overall Motor PWM limit
 
 // PID Gains for smooth steering
@@ -52,56 +42,38 @@ float Kd = 0.053; // Derivative gain (Adjust between 0.050 - 0.100)
 int lastLineError = 0;
 float lineIntegral = 0;
 
-// Global Pulse Counters (Encoders)
-volatile long left_pulses  = 0;
-volatile long right_pulses = 0;
-
-// ==========================================
-// INTERRUPT SERVICE ROUTINES (Encoders)
-// ==========================================
-void ISR_left_encoder() {
-  if (digitalRead(LEFT_ENC_B) == HIGH) {
-    left_pulses++;
-  } else {
-    left_pulses--;
-  }
-}
-
-void ISR_right_encoder() {
-  if (digitalRead(RIGHT_ENC_B) == HIGH) {
-    right_pulses--; 
-  } else {
-    right_pulses++; 
-  }
-}
+// Last values computed by followLinePID (for the live view)
+int lastPosition = 0;
+int lastLeftSpeed = 0;
+int lastRightSpeed = 0;
 
 // ==========================================
 // MOTOR DRIVER CONTROL FUNCTIONS
 // ==========================================
 void stopMotors() {
-  analogWrite(LEFT_RPWM, 0);
-  analogWrite(LEFT_LPWM, 0);
-  analogWrite(RIGHT_RPWM, 0);
-  analogWrite(RIGHT_LPWM, 0);
+  analogWrite(PIN_LEFT_RPWM, 0);
+  analogWrite(PIN_LEFT_LPWM, 0);
+  analogWrite(PIN_RIGHT_RPWM, 0);
+  analogWrite(PIN_RIGHT_LPWM, 0);
 }
 
 void setMotorSpeeds(int leftSpeed, int rightSpeed) {
   // Left Motor Direction & Speed
   if (leftSpeed >= 0) {
-    analogWrite(LEFT_RPWM, constrain(leftSpeed, 0, MAX_PWM));
-    analogWrite(LEFT_LPWM, 0);
+    analogWrite(PIN_LEFT_RPWM, constrain(leftSpeed, 0, MAX_PWM));
+    analogWrite(PIN_LEFT_LPWM, 0);
   } else {
-    analogWrite(LEFT_RPWM, 0);
-    analogWrite(LEFT_LPWM, constrain(-leftSpeed, 0, MAX_PWM));
+    analogWrite(PIN_LEFT_RPWM, 0);
+    analogWrite(PIN_LEFT_LPWM, constrain(-leftSpeed, 0, MAX_PWM));
   }
 
   // Right Motor Direction & Speed
   if (rightSpeed >= 0) {
-    analogWrite(RIGHT_RPWM, constrain(rightSpeed, 0, MAX_PWM));
-    analogWrite(RIGHT_LPWM, 0);
+    analogWrite(PIN_RIGHT_RPWM, constrain(rightSpeed, 0, MAX_PWM));
+    analogWrite(PIN_RIGHT_LPWM, 0);
   } else {
-    analogWrite(RIGHT_RPWM, 0);
-    analogWrite(RIGHT_LPWM, constrain(-rightSpeed, 0, MAX_PWM));
+    analogWrite(PIN_RIGHT_RPWM, 0);
+    analogWrite(PIN_RIGHT_LPWM, constrain(-rightSpeed, 0, MAX_PWM));
   }
 }
 
@@ -111,10 +83,8 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
 const float SENSOR_EXPONENT = 2.5;
 
 void readSensors() {
-  const int sensorPins[NUM_SENSORS] = {IR0, IR1, IR2, IR3, IR4, IR5, IR6, IR7};
-  
   for (int i = 0; i < NUM_SENSORS; i++) {
-    rawSensors[i] = analogRead(sensorPins[i]);
+    rawSensors[i] = analogRead(IR_PINS[i]);
     int clamped = constrain(rawSensors[i], whiteValues[i], blackValues[i]);
     float ratio = (float)(clamped - whiteValues[i]) / (float)(blackValues[i] - whiteValues[i]);
     float curvedRatio = pow(ratio, SENSOR_EXPONENT);
@@ -125,7 +95,7 @@ void readSensors() {
 
 int getLinePosition() {
   readSensors();
-  
+
   long weightedSum = 0;
   long totalValue  = 0;
 
@@ -141,15 +111,16 @@ int getLinePosition() {
   return weightedSum / totalValue;
 }
 
-void followLinePID() {
+// driveMotors = false computes everything but leaves the motors off (live view)
+void followLinePID(bool driveMotors = true) {
   int position = getLinePosition();
-  
+
   // Setpoint is center (3500)
   int error = position - 3500;
 
   lineIntegral += error;
   lineIntegral = constrain(lineIntegral, -3000, 3000);
-  
+
   int derivative = error - lastLineError;
   lastLineError  = error;
 
@@ -161,7 +132,145 @@ void followLinePID() {
   int leftMotorSpeed  = BASE_PWM - adjustment; // change to change the steering direction
   int rightMotorSpeed = BASE_PWM + adjustment;
 
-  setMotorSpeeds(leftMotorSpeed, rightMotorSpeed);
+  lastPosition   = position;
+  lastLeftSpeed  = leftMotorSpeed;
+  lastRightSpeed = rightMotorSpeed;
+
+  if (driveMotors) setMotorSpeeds(leftMotorSpeed, rightMotorSpeed);
+}
+
+// ==========================================
+// CALIBRATION / TEST HELPERS
+// ==========================================
+void flushSerial() {
+  delay(20);
+  while (Serial.available()) Serial.read();
+}
+
+bool keyPressed() {
+  if (!Serial.available()) return false;
+  flushSerial();
+  return true;
+}
+
+void printArray(const char *name, const int *v) {
+  Serial.print("const int ");
+  Serial.print(name);
+  Serial.print("[8] = {");
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    Serial.print(v[i]);
+    if (i < NUM_SENSORS - 1) Serial.print(", ");
+  }
+  Serial.println("};");
+}
+
+void useOriginalCalibration() {
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    whiteValues[i] = ORIGINAL_WHITE[i];
+    blackValues[i] = ORIGINAL_BLACK[i];
+  }
+}
+
+void printCalibration() {
+  Serial.println();
+  printArray("whiteValues", whiteValues);
+  printArray("blackValues", blackValues);
+  Serial.println();
+}
+
+void calibrate() {
+  stopMotors();
+  int newWhite[NUM_SENSORS], newBlack[NUM_SENSORS];
+  for (int i = 0; i < NUM_SENSORS; i++) { newWhite[i] = 1023; newBlack[i] = 0; }
+
+  Serial.println();
+  Serial.println("CALIBRATION: slide the robot slowly side to side so EVERY sensor");
+  Serial.println("passes over both the white floor and the black line. Starting in 2 s...");
+  delay(2000);
+  Serial.print("Sampling 6 s ");
+
+  unsigned long start = millis();
+  int n = 0;
+  while (millis() - start < 6000) {
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      int v = analogRead(IR_PINS[i]);
+      if (v < newWhite[i]) newWhite[i] = v;
+      if (v > newBlack[i]) newBlack[i] = v;
+    }
+    if (++n % 60 == 0) Serial.print('.');
+    delay(5);
+  }
+  Serial.println(" done");
+  Serial.println();
+
+  Serial.println("Sensor | White | Black | Range | Original W/B | Check");
+  Serial.println("-------+-------+-------+-------+--------------+------");
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    int range = newBlack[i] - newWhite[i];
+    int dW = newWhite[i] - ORIGINAL_WHITE[i];
+    int dB = newBlack[i] - ORIGINAL_BLACK[i];
+    char line[80];
+    snprintf(line, sizeof(line), "  %d    | %5d | %5d | %5d | %4d / %4d  | ",
+             i, newWhite[i], newBlack[i], range, ORIGINAL_WHITE[i], ORIGINAL_BLACK[i]);
+    Serial.print(line);
+    if (range < 200)                       Serial.println("WEAK: not swept over line, or bad sensor");
+    else if (abs(dW) > 80 || abs(dB) > 80) Serial.println("original value is OUTDATED");
+    else                                   Serial.println("ok");
+  }
+
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    whiteValues[i] = newWhite[i];
+    blackValues[i] = newBlack[i];
+  }
+  Serial.println();
+  Serial.println("Now using the NEW values ('o' = back to original). Paste these to keep them:");
+  printCalibration();
+}
+
+void liveView() {
+  stopMotors();
+  lastLineError = 0;
+  lineIntegral = 0;
+  Serial.println();
+  Serial.println("LIVE VIEW (motors off, any key stops). Sensor 0 (right most) printed first.");
+  Serial.println("Put the line under each side: the slower wheel must be on the line's side.");
+  while (!keyPressed()) {
+    followLinePID(false);
+
+    Serial.print("raw ");
+    for (int i = 0; i < NUM_SENSORS; i++) { Serial.print(rawSensors[i]); Serial.print(' '); }
+    Serial.print("| norm ");
+    for (int i = 0; i < NUM_SENSORS; i++) { Serial.print(normalizedSensors[i]); Serial.print(' '); }
+    Serial.print("| ");
+    for (int i = 0; i < NUM_SENSORS; i++) Serial.print(normalizedSensors[i] > 500 ? '#' : '.');
+    Serial.print(" | pos "); Serial.print(lastPosition);
+    Serial.print(" | L "); Serial.print(lastLeftSpeed);
+    Serial.print(" R "); Serial.print(lastRightSpeed);
+    if (lastLeftSpeed < lastRightSpeed - 2)      Serial.println("  -> turns LEFT");
+    else if (lastRightSpeed < lastLeftSpeed - 2) Serial.println("  -> turns RIGHT");
+    else                                         Serial.println("  -> straight");
+    delay(150);
+  }
+  Serial.println("stopped");
+}
+
+void runFollower() {
+  Serial.println();
+  Serial.println("LINE FOLLOW: place the robot on the line. Starting in 2 s (any key stops).");
+  delay(2000); // 2-second startup safety delay
+  flushSerial();
+  lastLineError = 0;
+  lineIntegral = 0;
+  while (!keyPressed()) {
+    followLinePID();
+    delay(5);
+  }
+  stopMotors();
+  Serial.println("stopped");
+}
+
+void printMenu() {
+  Serial.println("Commands: c=calibrate  r=live view  g=run follower  o=original cal  p=print cal");
 }
 
 // ==========================================
@@ -171,29 +280,37 @@ void setup() {
   Serial.begin(115200);
 
   // Motor Driver Pins Setup
-  pinMode(RIGHT_RPWM, OUTPUT);
-  pinMode(RIGHT_LPWM, OUTPUT);
-  pinMode(LEFT_RPWM, OUTPUT);
-  pinMode(LEFT_LPWM, OUTPUT);
-
-  // Encoder Pins Setup
-  pinMode(LEFT_ENC_A, INPUT_PULLUP);
-  pinMode(LEFT_ENC_B, INPUT_PULLUP);
-  pinMode(RIGHT_ENC_A, INPUT_PULLUP);
-  pinMode(RIGHT_ENC_B, INPUT_PULLUP);
+  pinMode(PIN_RIGHT_RPWM, OUTPUT);
+  pinMode(PIN_RIGHT_LPWM, OUTPUT);
+  pinMode(PIN_LEFT_RPWM, OUTPUT);
+  pinMode(PIN_LEFT_LPWM, OUTPUT);
+  stopMotors();
 
   // Enable IR Array Power Pin
-  pinMode(IR_EN, OUTPUT);
-  digitalWrite(IR_EN, HIGH);
+  pinMode(PIN_IR_EN, OUTPUT);
+  digitalWrite(PIN_IR_EN, HIGH);
 
-  // Encoder Interrupt Attachments (Updated Pins 18 & 2)
-  attachInterrupt(digitalPinToInterrupt(LEFT_ENC_A), ISR_left_encoder, RISING);
-  attachInterrupt(digitalPinToInterrupt(RIGHT_ENC_A), ISR_right_encoder, RISING);
+  useOriginalCalibration();
+  delay(500);
 
-  delay(2000); // 2-second startup safety delay
+  Serial.println();
+  Serial.println("=== IR array test ===");
+  printCalibration();
+  printMenu();
 }
 
 void loop() {
-  followLinePID();
-  delay(5);
+  if (!Serial.available()) return;
+  char cmd = Serial.read();
+  flushSerial();
+
+  switch (cmd) {
+    case 'c': calibrate(); break;
+    case 'r': liveView(); break;
+    case 'g': runFollower(); break;
+    case 'o': useOriginalCalibration(); printCalibration(); break;
+    case 'p': printCalibration(); break;
+    default: break;
+  }
+  printMenu();
 }

@@ -1,14 +1,14 @@
 #include <Arduino.h>
 
-#define IR0 A15
-#define IR1 A14
-#define IR2 A13
-#define IR3 A12
-#define IR4 A11
-#define IR5 A10
-#define IR6 A9
-#define IR7 A8
-#define IR_EN 49
+#define IR0 A7 // Robot's right most
+#define IR1 A6
+#define IR2 A5
+#define IR3 A4
+#define IR4 A3
+#define IR5 A2
+#define IR6 A1
+#define IR7 A0 // Robot's left most
+#define IR_EN 52
 
 #define NUM_SENSORS 8
 #define CALIBRATION_TIME 5000
