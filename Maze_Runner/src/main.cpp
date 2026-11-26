@@ -4,6 +4,8 @@
 #include "IRArray.h"
 #include "Ultrasonic.h"
 #include "LineFollower.h"
+#include "Gyroscope.h"
+#include "gyroscope_initial_data.h"
 #include "hardware_adapter.h"
 #include "maze_explorer.h"
 
@@ -15,6 +17,12 @@ MotorDriver motorDriver(
     PIN_LEFT_ENC_A, PIN_LEFT_ENC_B,
     PIN_RIGHT_ENC_A, PIN_RIGHT_ENC_B
 );
+
+// Gyroscope: load pre-measured calibration at startup (saves ~2 s recalibration)
+Gyroscope gyro(MPU6050_I2C_ADDR,
+               GYRO_RECOMMENDED_FS,
+               ACCEL_RECOMMENDED_FS,
+               GYRO_RECOMMENDED_DLPF);
 
 IRArray irSensorArray(IR_PINS, PIN_IR_EN, NUM_IR_SENSORS);
 Ultrasonics frontUltrasonic(PIN_ULTRA_TRIG, PIN_ULTRA_ECHO);
