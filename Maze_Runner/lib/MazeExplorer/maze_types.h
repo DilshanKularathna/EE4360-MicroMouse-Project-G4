@@ -36,6 +36,7 @@ enum Direction : uint8_t {
 // Dimensions according to EE4360 2026 Challenge Specification
 #define MAZE_A_SIZE   4  // Section A: 4x4 cells
 #define MAZE_B_SIZE   9  // Section B: 9x9 cells
+#define MAZE_CELL_CM  25.0f
 
 // Floor tile types detected by IR array / sensors
 enum TileType : uint8_t {
@@ -64,11 +65,14 @@ struct CellCoord {
  * ============================================================================
  */
 struct ExplorationResult {
+    // Frames: mazeA uses the robot's heading on the START tile as NORTH.
+    // mazeB uses the robot's heading when it enters Section B as NORTH.
     uint8_t   mazeA[MAZE_A_SIZE][MAZE_A_SIZE]; // Section A wall bitmasks (4x4)
     uint8_t   mazeB[MAZE_B_SIZE][MAZE_B_SIZE]; // Section B wall bitmasks (9x9)
     CellCoord startA;                          // Resolved start tile in mazeA
-    CellCoord bridgeEntryA;                    // Bridge ramp tile in mazeA
-    CellCoord bridgeExitB;                     // Bridge ramp / entrance in mazeB
+    CellCoord bridgeEntryA;                    // Bridge-out tile (corner) in mazeA
+    Direction bridgeExitDirA;                  // Side of bridgeEntryA where the bridge leaves
+    CellCoord bridgeExitB;                     // Bridge-in tile (corner) in mazeB; robot enters facing NORTH
     CellCoord goalB;                           // Full-white goal tile in mazeB
     bool      goalFound;                       // True if goal discovered
     bool      completed;                       // True if full exploration finished

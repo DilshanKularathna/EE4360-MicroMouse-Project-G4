@@ -1,31 +1,43 @@
 #include <Arduino.h>
 #include "config.h"
-#include "MotorDriver.h"
 #include "IRArray.h"
-#include "Ultrasonic.h"
 #include "LineFollower.h"
+#include "Ultrasonic.h"
 #include "hardware_adapter.h"
 #include "maze_explorer.h"
 
-// Instantiate Group 4 Hardware Components
-MotorDriver motorDriver(
-    PIN_LEFT_RPWM, PIN_LEFT_LPWM,
-    PIN_RIGHT_RPWM, PIN_RIGHT_LPWM,
-    PIN_MOTOR_EN,
-    PIN_LEFT_ENC_A, PIN_LEFT_ENC_B,
-    PIN_RIGHT_ENC_A, PIN_RIGHT_ENC_B
-);
+// Group 4 hardware
+IRArray      irSensorArray(IR_PINS, PIN_IR_EN, NUM_IR_SENSORS);
+LineFollower lineFollower(irSensorArray);
 
-IRArray irSensorArray(IR_PINS, PIN_IR_EN, NUM_IR_SENSORS);
-Ultrasonics frontUltrasonic(PIN_ULTRA_TRIG, PIN_ULTRA_ECHO);
-LineFollower lineFollower(motorDriver, irSensorArray);
-
-// Hardware & Line Following Adapters
-G4RobotPlatform platform(motorDriver, irSensorArray, frontUltrasonic);
+// Hardware & line following adapters
+G4RobotPlatform       platform(irSensorArray);
 G4LineFollowerAdapter lineFollowerAdapter(lineFollower, irSensorArray);
 
-// Maze Explorer Engine
+// Maze explorer engine
 MazeExplorer explorer(platform, &lineFollowerAdapter);
+
+// Blocks until the run is started. With a start button: press and release it.
+// Without one: cover the front sensor with a hand (3 readings under 5 cm),
+// then take the hand away. Nobody touches the robot either way.
+void waitForStartSignal() {
+#if PIN_START_BUTTON >= 0
+    pinMode(PIN_START_BUTTON, INPUT_PULLUP);
+    Serial.println(F("Press the start button."));
+    while (digitalRead(PIN_START_BUTTON) == HIGH) delay(10);
+    while (digitalRead(PIN_START_BUTTON) == LOW)  delay(10);
+#else
+    Serial.println(F("Cover the front sensor with your hand, then take it away."));
+    int seen = 0;
+    while (seen < 3) {
+        seen = (readUltrasonic(PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO) < 5.0f) ? seen + 1 : 0;
+        delay(60);
+    }
+    while (readUltrasonic(PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO) < 10.0f) delay(60);
+#endif
+    Serial.println(F("Starting in 2 s - keep clear."));
+    delay(2000);
+}
 
 void printExplorationResults(const ExplorationResult& res) {
     Serial.println(F("\n========================================"));
@@ -91,31 +103,28 @@ void printExplorationResults(const ExplorationResult& res) {
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) {
-        ; // Wait for serial monitor connection
-    }
+    delay(500);
 
     Serial.println(F("=== EE4360 Micromouse Maze Explorer ==="));
-    Serial.println(F("Initializing hardware..."));
+    Serial.println(F("Initializing hardware - keep the robot still..."));
 
-    // Calibrate / load thresholds into IR Array
+    // Motors, encoders, ultrasonics, gyro and IR array. Needed before the
+    // start signal, which uses the front sensor.
+    platform.begin();
+
     irSensorArray.setThresholds(DEFAULT_IR_THRESHOLDS);
     lineFollower.begin(WHITE_VALUES, BLACK_VALUES);
     lineFollower.setPIDGains(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
     lineFollower.setSpeeds(DEFAULT_BASE_PWM, DEFAULT_MAX_PWM);
 
-    Serial.println(F("Starting Phase 1 Exploration..."));
-    delay(2000); // 2 second pause before movement
+    waitForStartSignal();
 
-    // Run the full exploration sequence:
     // Section A (4x4) -> Bridge Marker -> Line Follow Bridge -> Section B (9x9) -> Goal
     ExplorationResult result = explorer.runExploration();
-
-    // Print mapped results
     printExplorationResults(result);
 }
 
 void loop() {
-    // Exploration complete, idle motors stopped
+    // Exploration complete, motors stopped
     delay(1000);
 }

@@ -1,8 +1,9 @@
 #include "LineFollower.h"
 #include "config.h"
+#include "MotorDriver.h"
 
-LineFollower::LineFollower(MotorDriver& motorRef, IRArray& irRef)
-    : motors(motorRef), irSensors(irRef),
+LineFollower::LineFollower(IRArray& irRef)
+    : irSensors(irRef),
       basePwm(DEFAULT_BASE_PWM), maxPwm(DEFAULT_MAX_PWM),
       kp(DEFAULT_KP), ki(DEFAULT_KI), kd(DEFAULT_KD),
       lastError(0), integral(0), whiteVals(nullptr), blackVals(nullptr) {}
@@ -64,5 +65,11 @@ void LineFollower::update() {
     int leftMotorSpeed = constrain((int)(basePwm - adjustment), -maxPwm, maxPwm);
     int rightMotorSpeed = constrain((int)(basePwm + adjustment), -maxPwm, maxPwm);
 
-    motors.setSpeeds(leftMotorSpeed, rightMotorSpeed);
+    setMotors(leftMotorSpeed, rightMotorSpeed);
+}
+
+void LineFollower::stop() {
+    stopMotors();
+    integral = 0;
+    lastError = 0;
 }

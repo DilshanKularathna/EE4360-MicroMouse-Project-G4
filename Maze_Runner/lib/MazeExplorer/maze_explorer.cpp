@@ -4,398 +4,62 @@ MazeExplorer::MazeExplorer(IRobotPlatform& platform, ILineFollower* follower)
     : robot(platform),
       lineFollower(follower),
       state(STATE_INIT),
-      currentHeading(DIR_NORTH),
-      currA_x(3), currA_y(3),
-      minA_x(3), maxA_x(3), minA_y(3), maxA_y(3),
-      bridgeRampA({0, 0}),
-      currB_x(0), currB_y(0),
-      bridgeExitB({0, 0}),
-      goalB({0, 0}),
-      goalFound(false)
+      heading(DIR_NORTH),
+      posX(0), posY(0),
+      startCell({0, 0}),
+      markerA({0, 0}), markerAKnown(false),
+      bridgeTile({0, 0}), bridgeTileKnown(false),
+      openingDir(DIR_NORTH), openingKnown(false),
+      bridgeInB({0, 0}),
+      goalCell({0, 0}), goalFound(false),
+      searchTarget({0, 0})
 {
-    finalResult.startA = {0, 0};
-    finalResult.bridgeEntryA = {0, 0};
-    finalResult.bridgeExitB = {0, 0};
-    finalResult.goalB = {0, 0};
-    finalResult.goalFound = false;
-    finalResult.completed = false;
+    finalResult = ExplorationResult();
 }
 
+// ============================================================================
+// Setup
+// ============================================================================
+
 void MazeExplorer::begin() {
-    // Clear Section A working grid (7x7 centered at 3,3)
-    for (int y = 0; y < GRID_A_WORK_SIZE; y++) {
-        for (int x = 0; x < GRID_A_WORK_SIZE; x++) {
-            workGridA[y][x] = 0;
-        }
-    }
+    finalResult = ExplorationResult();
+    finalResult.bridgeExitDirA = DIR_NORTH;
 
-    // Clear Section B grid (9x9)
-    for (int y = 0; y < MAZE_B_SIZE; y++) {
-        for (int x = 0; x < MAZE_B_SIZE; x++) {
-            gridB[y][x] = 0;
-            finalResult.mazeB[y][x] = 0;
-        }
-    }
-
-    for (int y = 0; y < MAZE_A_SIZE; y++) {
-        for (int x = 0; x < MAZE_A_SIZE; x++) {
-            finalResult.mazeA[y][x] = 0;
-        }
-    }
-
-    // Initialize relative origin for Section A
-    currA_x = 3;
-    currA_y = 3;
-    minA_x = maxA_x = 3;
-    minA_y = maxA_y = 3;
-
-    // Robot starts facing arbitrary physical direction -> defined as DIR_NORTH
-    currentHeading = DIR_NORTH;
-    dfsStack.clear();
-
+    map.reset(MAZE_A_SIZE);
+    posX = posY = map.origin();
+    heading = DIR_NORTH;              // the robot's heading on START defines NORTH
+    startCell = {posX, posY};
+    markerAKnown = bridgeTileKnown = openingKnown = false;
     goalFound = false;
-    finalResult.goalFound = false;
-    finalResult.completed = false;
 
     robot.begin();
+
+    // Scan the START tile from two headings so all four sides are known (the
+    // robot has no rear sensor). Turning on START is free: the race clock only
+    // starts when the robot leaves the tile.
+    scanWalls();
+    turnToHeading(DIR_EAST);
+    scanWalls();
+    map.markVisited(posX, posY);
+
     state = STATE_EXPLORE_SECTION_A;
 }
 
-void MazeExplorer::getNeighborCoord(int8_t x, int8_t y, Direction dir, int8_t& nx, int8_t& ny) const {
-    nx = x;
-    ny = y;
-    switch (dir) {
-        case DIR_NORTH: ny = y + 1; break;
-        case DIR_EAST:  nx = x + 1; break;
-        case DIR_SOUTH: ny = y - 1; break;
-        case DIR_WEST:  nx = x - 1; break;
+ExplorationResult MazeExplorer::runExploration() {
+    begin();
+    while (loopStep()) {
     }
-}
-
-bool MazeExplorer::isWithinBounds(int8_t x, int8_t y, bool inSectionA) const {
-    if (inSectionA) {
-        // Must stay inside 7x7 working buffer
-        if (x < 0 || x >= GRID_A_WORK_SIZE || y < 0 || y >= GRID_A_WORK_SIZE) {
-            return false;
-        }
-        // Section A is strictly 4x4. Check if adding (x, y) exceeds 4x4 bounding box
-        int8_t tMinX = (x < minA_x) ? x : minA_x;
-        int8_t tMaxX = (x > maxA_x) ? x : maxA_x;
-        int8_t tMinY = (y < minA_y) ? y : minA_y;
-        int8_t tMaxY = (y > maxA_y) ? y : maxA_y;
-
-        if ((tMaxX - tMinX + 1) > MAZE_A_SIZE || (tMaxY - tMinY + 1) > MAZE_A_SIZE) {
-            return false; // Beyond 4x4 physical arena perimeter
-        }
-        return true;
-    } else {
-        // Section B is strictly 9x9 (0..8)
-        return (x >= 0 && x < MAZE_B_SIZE && y >= 0 && y < MAZE_B_SIZE);
-    }
-}
-
-bool MazeExplorer::hasWall(int8_t x, int8_t y, Direction dir, bool inSectionA) const {
-    uint8_t cellValue = inSectionA ? workGridA[y][x] : gridB[y][x];
-    uint8_t mask = (1 << dir);
-    return (cellValue & mask) != 0;
-}
-
-bool MazeExplorer::isVisited(int8_t x, int8_t y, bool inSectionA) const {
-    uint8_t cellValue = inSectionA ? workGridA[y][x] : gridB[y][x];
-    return (cellValue & CELL_VISITED) != 0;
-}
-
-void MazeExplorer::updateSymmetricWall(int8_t x, int8_t y, Direction dir, bool inSectionA) {
-    int8_t nx, ny;
-    getNeighborCoord(x, y, dir, nx, ny);
-
-    if (inSectionA) {
-        if (nx >= 0 && nx < GRID_A_WORK_SIZE && ny >= 0 && ny < GRID_A_WORK_SIZE) {
-            Direction opposite = (Direction)((dir + 2) % 4);
-            workGridA[ny][nx] |= (1 << opposite);
-        }
-    } else {
-        if (nx >= 0 && nx < MAZE_B_SIZE && ny >= 0 && ny < MAZE_B_SIZE) {
-            Direction opposite = (Direction)((dir + 2) % 4);
-            gridB[ny][nx] |= (1 << opposite);
-        }
-    }
-}
-
-void MazeExplorer::senseAndMapCurrentCell(bool inSectionA) {
-    int8_t cx = inSectionA ? currA_x : currB_x;
-    int8_t cy = inSectionA ? currA_y : currB_y;
-
-    // Mark current cell as visited
-    if (inSectionA) {
-        workGridA[cy][cx] |= CELL_VISITED;
-        if (cx < minA_x) minA_x = cx;
-        if (cx > maxA_x) maxA_x = cx;
-        if (cy < minA_y) minA_y = cy;
-        if (cy > maxA_y) maxA_y = cy;
-    } else {
-        gridB[cy][cx] |= CELL_VISITED;
-    }
-
-    // Read wall sensors
-    WallSensors ws = robot.readWalls();
-
-    // Convert robot-relative sensor readings to grid directions
-    Direction frontDir = currentHeading;
-    Direction rightDir = (Direction)((currentHeading + 1) % 4);
-    Direction leftDir  = (Direction)((currentHeading + 3) % 4);
-
-    if (ws.wallFront) {
-        if (inSectionA) workGridA[cy][cx] |= (1 << frontDir);
-        else gridB[cy][cx] |= (1 << frontDir);
-        updateSymmetricWall(cx, cy, frontDir, inSectionA);
-    }
-    if (ws.wallRight) {
-        if (inSectionA) workGridA[cy][cx] |= (1 << rightDir);
-        else gridB[cy][cx] |= (1 << rightDir);
-        updateSymmetricWall(cx, cy, rightDir, inSectionA);
-    }
-    if (ws.wallLeft) {
-        if (inSectionA) workGridA[cy][cx] |= (1 << leftDir);
-        else gridB[cy][cx] |= (1 << leftDir);
-        updateSymmetricWall(cx, cy, leftDir, inSectionA);
-    }
-
-    // If a neighbor would exceed 4x4 bounds in Section A, mark boundary wall
-    if (inSectionA) {
-        for (uint8_t d = 0; d < 4; d++) {
-            Direction dir = (Direction)d;
-            int8_t nx, ny;
-            getNeighborCoord(cx, cy, dir, nx, ny);
-            if (!isWithinBounds(nx, ny, true)) {
-                workGridA[cy][cx] |= (1 << dir);
-            }
-        }
-    }
-}
-
-void MazeExplorer::turnToHeading(Direction targetHeading) {
-    int diff = (int)targetHeading - (int)currentHeading;
-    if (diff == 1 || diff == -3) {
-        robot.turn(1);  // Right turn 90°
-    } else if (diff == -1 || diff == 3) {
-        robot.turn(-1); // Left turn 90°
-    } else if (diff == 2 || diff == -2) {
-        robot.turn(2);  // 180° turn
-    }
-    currentHeading = targetHeading;
-}
-
-Direction MazeExplorer::getTurnDirection(int8_t fromX, int8_t fromY, int8_t toX, int8_t toY) const {
-    if (toY > fromY) return DIR_NORTH;
-    if (toX > fromX) return DIR_EAST;
-    if (toY < fromY) return DIR_SOUTH;
-    return DIR_WEST;
-}
-
-bool MazeExplorer::stepDFS(bool inSectionA) {
-    int8_t cx = inSectionA ? currA_x : currB_x;
-    int8_t cy = inSectionA ? currA_y : currB_y;
-
-    // Check open, unvisited neighbors in preference: Straight -> Right -> Left -> Back
-    const Direction checkOrder[4] = {
-        currentHeading,
-        (Direction)((currentHeading + 1) % 4),
-        (Direction)((currentHeading + 3) % 4),
-        (Direction)((currentHeading + 2) % 4)
-    };
-
-    for (uint8_t i = 0; i < 4; i++) {
-        Direction dir = checkOrder[i];
-        if (!hasWall(cx, cy, dir, inSectionA)) {
-            int8_t nx, ny;
-            getNeighborCoord(cx, cy, dir, nx, ny);
-
-            if (isWithinBounds(nx, ny, inSectionA) && !isVisited(nx, ny, inSectionA)) {
-                // Push current position to backtrack stack
-                dfsStack.push({cx, cy});
-
-                // Orient and drive
-                turnToHeading(dir);
-                if (robot.moveForwardOneCell()) {
-                    if (inSectionA) {
-                        currA_x = nx;
-                        currA_y = ny;
-                    } else {
-                        currB_x = nx;
-                        currB_y = ny;
-                    }
-                    return true;
-                } else {
-                    // Physical collision or stall -> restore wall flag and remain
-                    if (inSectionA) workGridA[cy][cx] |= (1 << dir);
-                    else gridB[cy][cx] |= (1 << dir);
-                    return false;
-                }
-            }
-        }
-    }
-
-    // No unvisited open neighbor found -> Backtrack
-    if (dfsStack.isEmpty()) {
-        // Backtracked all the way to start of this section
-        return false;
-    }
-
-    CellCoord prev;
-    dfsStack.pop(prev);
-
-    Direction backDir = getTurnDirection(cx, cy, prev.x, prev.y);
-    turnToHeading(backDir);
-    if (robot.moveForwardOneCell()) {
-        if (inSectionA) {
-            currA_x = prev.x;
-            currA_y = prev.y;
-        } else {
-            currB_x = prev.x;
-            currB_y = prev.y;
-        }
-        return true;
-    }
-
-    return false;
-}
-
-void MazeExplorer::normalizeSectionA() {
-    int8_t offsetX = minA_x;
-    int8_t offsetY = minA_y;
-
-    // Shift working grid into canonical 4x4 array
-    for (int y = 0; y < MAZE_A_SIZE; y++) {
-        for (int x = 0; x < MAZE_A_SIZE; x++) {
-            int8_t wx = x + offsetX;
-            int8_t wy = y + offsetY;
-            if (wx >= 0 && wx < GRID_A_WORK_SIZE && wy >= 0 && wy < GRID_A_WORK_SIZE) {
-                finalResult.mazeA[y][x] = workGridA[wy][wx];
-            } else {
-                finalResult.mazeA[y][x] = 0x0F; // Solid wall if outside
-            }
-        }
-    }
-
-    // Canonical coordinates of start tile (started at 3, 3)
-    finalResult.startA.x = 3 - offsetX;
-    finalResult.startA.y = 3 - offsetY;
-
-    // Canonical coordinates of bridge ramp tile
-    finalResult.bridgeEntryA.x = bridgeRampA.x - offsetX;
-    finalResult.bridgeEntryA.y = bridgeRampA.y - offsetY;
+    return finalResult;
 }
 
 bool MazeExplorer::loopStep() {
     switch (state) {
-        case STATE_INIT:
-            begin();
-            return true;
-
-        case STATE_EXPLORE_SECTION_A: {
-            senseAndMapCurrentCell(true);
-
-            // Check floor tile
-            TileType tile = robot.readFloorTile();
-            if (tile == TILE_BRIDGE_MARKER) {
-                // Detected 9cm white square with 3cm black center!
-                // The tile immediately ahead is the bridge ramp
-                int8_t rampX, rampY;
-                getNeighborCoord(currA_x, currA_y, currentHeading, rampX, rampY);
-                bridgeRampA.x = rampX;
-                bridgeRampA.y = rampY;
-
-                state = STATE_APPROACH_BRIDGE;
-                return true;
-            }
-
-            // Step DFS exploration
-            bool canContinue = stepDFS(true);
-            if (!canContinue) {
-                // Section A fully mapped without finding bridge marker on unvisited cells
-                // (e.g., if marker was already sighted or reachable set exhausted)
-                state = STATE_APPROACH_BRIDGE;
-            }
-            return true;
-        }
-
-        case STATE_APPROACH_BRIDGE: {
-            // Drive forward 1 cell onto the bridge ramp tile
-            robot.moveForwardOneCell();
-            normalizeSectionA();
-            state = STATE_CROSSING_BRIDGE;
-            return true;
-        }
-
-        case STATE_CROSSING_BRIDGE: {
-            // Hand control over to pluggable line follower
-            if (lineFollower != nullptr) {
-                lineFollower->begin();
-                while (!lineFollower->step()) {
-                    // Running line follower loop across bridge
-                }
-                lineFollower->stop();
-            }
-            state = STATE_ENTER_SECTION_B;
-            return true;
-        }
-
-        case STATE_ENTER_SECTION_B: {
-            // Drive forward 1 cell off the bridge corridor into Section B
-            robot.moveForwardOneCell();
-            currB_x = 0;
-            currB_y = 0;
-            currentHeading = DIR_NORTH;
-            bridgeExitB = {0, 0};
-            finalResult.bridgeExitB = bridgeExitB;
-
-            dfsStack.clear();
-            state = STATE_EXPLORE_SECTION_B;
-            return true;
-        }
-
-        case STATE_EXPLORE_SECTION_B: {
-            senseAndMapCurrentCell(false);
-
-            // Check if current tile is the white goal tile
-            TileType tile = robot.readFloorTile();
-            if (tile == TILE_WHITE) {
-                goalB = {currB_x, currB_y};
-                goalFound = true;
-                finalResult.goalB = goalB;
-                finalResult.goalFound = true;
-                finalResult.completed = true;
-
-                // Copy mapped mazeB into final result
-                for (int y = 0; y < MAZE_B_SIZE; y++) {
-                    for (int x = 0; x < MAZE_B_SIZE; x++) {
-                        finalResult.mazeB[y][x] = gridB[y][x];
-                    }
-                }
-
-                robot.stop();
-                state = STATE_COMPLETED;
-                return false; // Done!
-            }
-
-            // Continue DFS in Section B
-            bool canContinue = stepDFS(false);
-            if (!canContinue) {
-                // Explored all reachable cells in Section B
-                for (int y = 0; y < MAZE_B_SIZE; y++) {
-                    for (int x = 0; x < MAZE_B_SIZE; x++) {
-                        finalResult.mazeB[y][x] = gridB[y][x];
-                    }
-                }
-                finalResult.completed = goalFound;
-                robot.stop();
-                state = goalFound ? STATE_COMPLETED : STATE_FAILED;
-                return false;
-            }
-            return true;
-        }
-
+        case STATE_INIT:              begin(); return true;
+        case STATE_EXPLORE_SECTION_A: return stepExploreA();
+        case STATE_APPROACH_BRIDGE:   return stepApproachBridge();
+        case STATE_CROSSING_BRIDGE:   return stepCrossBridge();
+        case STATE_ENTER_SECTION_B:   return stepEnterSectionB();
+        case STATE_EXPLORE_SECTION_B: return stepExploreB();
         case STATE_COMPLETED:
         case STATE_FAILED:
         default:
@@ -404,10 +68,396 @@ bool MazeExplorer::loopStep() {
     }
 }
 
-ExplorationResult MazeExplorer::runExploration() {
-    begin();
-    while (loopStep()) {
-        // Running state machine
+// ============================================================================
+// Sensing and moving
+// ============================================================================
+
+void MazeExplorer::scanWalls() {
+    WallSensors ws = robot.readWalls();
+    if (ws.wallFront) map.setWall(posX, posY, heading);
+    if (ws.wallRight) map.setWall(posX, posY, (Direction)((heading + 1) & 3));
+    if (ws.wallLeft)  map.setWall(posX, posY, (Direction)((heading + 3) & 3));
+}
+
+void MazeExplorer::arriveAtCell(bool inSectionA) {
+    if (!map.isVisited(posX, posY)) {
+        scanWalls();                       // the side behind is open: we came through it
+        map.markVisited(posX, posY);
     }
-    return finalResult;
+
+    // The floor is read on every visit, so one missed reading is not final.
+    TileType tile = robot.readFloorTile();
+    if (inSectionA) {
+        if (tile == TILE_BRIDGE_MARKER) {
+            markerA = {posX, posY};
+            markerAKnown = true;
+            tryResolveOpening();
+        } else if (tile == TILE_WHITE && !startCell.equals(posX, posY)) {
+            // White but not START: the bridge-out tile (white with a black line)
+            bridgeTile = {posX, posY};
+            bridgeTileKnown = true;
+            map.requireCorner(posX, posY);
+            tryResolveOpening();
+        }
+    } else if (tile == TILE_WHITE && !bridgeInB.equals(posX, posY) && !goalFound) {
+        goalCell = {posX, posY};
+        goalFound = true;
+    }
+}
+
+// Turns and drives one cell. A failed move means there is a wall after all.
+bool MazeExplorer::moveToward(Direction d) {
+    turnToHeading(d);
+    if (robot.moveForwardOneCell()) {
+        posX += SectionMap::stepX(d);
+        posY += SectionMap::stepY(d);
+        return true;
+    }
+    map.setWall(posX, posY, d);
+    return false;
+}
+
+void MazeExplorer::turnToHeading(Direction target) {
+    int diff = ((int)target - (int)heading + 4) & 3;
+    if (diff == 1)      robot.turn(1);
+    else if (diff == 3) robot.turn(-1);
+    else if (diff == 2) robot.turn(2);
+    heading = target;
+}
+
+// ============================================================================
+// Search (breadth-first over the known map)
+// ============================================================================
+
+bool MazeExplorer::isTarget(SearchMode mode, int8_t fromX, int8_t fromY, int8_t x, int8_t y) const {
+    switch (mode) {
+        case SEARCH_FRONTIER:
+            if (!map.canBeInside(x, y)) return false;
+            // Until the bridge opening is known, only leave the bridge tile
+            // towards cells that are certainly inside Section A.
+            if (state == STATE_EXPLORE_SECTION_A && bridgeTileKnown && !openingKnown &&
+                bridgeTile.equals(fromX, fromY) && !map.surelyInside(x, y))
+                return false;
+            return true;
+        case SEARCH_PATH_CELLS: {
+            uint16_t i = idx(x, y);
+            return (onPath[i >> 3] & (1 << (i & 7))) != 0;
+        }
+        case SEARCH_TARGET:
+        default:
+            return false;
+    }
+}
+
+// Direction of the first move on the shortest route to the nearest target,
+// or NO_DIR if there is none. Routes only use visited cells (all sides known).
+uint8_t MazeExplorer::firstStep(SearchMode mode) {
+    for (uint16_t i = 0; i < MAX_CELLS; i++) parentDir[i] = NO_DIR;
+
+    const uint16_t start = idx(posX, posY);
+    parentDir[start] = 4;   // marks the start
+    uint16_t head = 0, tail = 0;
+    queue[tail++] = start;
+
+    int8_t   foundX = -1, foundY = -1;
+    while (head < tail && foundX < 0) {
+        uint16_t cur = queue[head++];
+        int8_t cx = (int8_t)(cur % SectionMap::MAX_WORK);
+        int8_t cy = (int8_t)(cur / SectionMap::MAX_WORK);
+
+        // Straight on first, then right, left, back: fewer turns on ties
+        for (uint8_t k = 0; k < 4 && foundX < 0; k++) {
+            static const uint8_t ORDER[4] = {0, 1, 3, 2};
+            Direction d = (Direction)((heading + ORDER[k]) & 3);
+            if (map.hasWall(cx, cy, d)) continue;
+            int8_t nx = cx + SectionMap::stepX(d), ny = cy + SectionMap::stepY(d);
+            if (!map.inWork(nx, ny)) continue;
+            uint16_t ni = idx(nx, ny);
+            if (parentDir[ni] != NO_DIR) continue;
+
+            if (map.isVisited(nx, ny)) {
+                parentDir[ni] = (uint8_t)d;
+                if (mode == SEARCH_TARGET && searchTarget.equals(nx, ny)) { foundX = nx; foundY = ny; }
+                else queue[tail++] = ni;
+            } else if (isTarget(mode, cx, cy, nx, ny)) {
+                parentDir[ni] = (uint8_t)d;
+                foundX = nx; foundY = ny;
+            }
+        }
+    }
+    if (foundX < 0) return NO_DIR;
+
+    // Walk back to the start; the last direction seen is the first move
+    int8_t x = foundX, y = foundY;
+    uint8_t d = parentDir[idx(x, y)];
+    while (true) {
+        int8_t px = x - SectionMap::stepX((Direction)d);
+        int8_t py = y - SectionMap::stepY((Direction)d);
+        if (idx(px, py) == start) return d;
+        x = px; y = py;
+        d = parentDir[idx(x, y)];
+    }
+}
+
+// Shortest bridge-in -> FINISH route assuming unknown walls are open. Marks
+// its cells in onPath. Returns true if some of them are still unvisited
+// (the route is not proven yet).
+bool MazeExplorer::markOptimisticPath() {
+    for (uint16_t i = 0; i < sizeof(onPath); i++) onPath[i] = 0;
+    for (uint16_t i = 0; i < MAX_CELLS; i++) parentDir[i] = NO_DIR;
+
+    const uint16_t start = idx(bridgeInB.x, bridgeInB.y);
+    parentDir[start] = 4;
+    uint16_t head = 0, tail = 0;
+    queue[tail++] = start;
+    bool found = false;
+    while (head < tail && !found) {
+        uint16_t cur = queue[head++];
+        int8_t cx = (int8_t)(cur % SectionMap::MAX_WORK);
+        int8_t cy = (int8_t)(cur / SectionMap::MAX_WORK);
+        for (uint8_t d = 0; d < 4; d++) {
+            if (map.hasWall(cx, cy, (Direction)d)) continue;
+            int8_t nx = cx + SectionMap::stepX((Direction)d), ny = cy + SectionMap::stepY((Direction)d);
+            if (!map.canBeInside(nx, ny)) continue;
+            uint16_t ni = idx(nx, ny);
+            if (parentDir[ni] != NO_DIR) continue;
+            parentDir[ni] = d;
+            if (goalCell.equals(nx, ny)) { found = true; break; }
+            queue[tail++] = ni;
+        }
+    }
+    if (!found) return false;
+
+    bool unknownOnPath = false;
+    int8_t x = goalCell.x, y = goalCell.y;
+    while (true) {
+        uint16_t i = idx(x, y);
+        onPath[i >> 3] |= (uint8_t)(1 << (i & 7));
+        if (!map.isVisited(x, y)) unknownOnPath = true;
+        if (i == start) break;
+        Direction d = (Direction)parentDir[i];
+        x -= SectionMap::stepX(d);
+        y -= SectionMap::stepY(d);
+    }
+    return unknownOnPath;
+}
+
+// ============================================================================
+// Section A bridge
+// ============================================================================
+
+void MazeExplorer::setOpening(int8_t x, int8_t y, Direction d) {
+    bridgeTile = {x, y};
+    bridgeTileKnown = true;
+    openingDir = d;
+    openingKnown = true;
+    markerA = {(int8_t)(x - SectionMap::stepX(d)), (int8_t)(y - SectionMap::stepY(d))};
+    markerAKnown = true;
+    map.setWall(x, y, d);                 // never drive off the bridge without the line follower
+    map.requireCorner(x, y);
+    map.requireOuterSide(x, y, d);
+}
+
+// Marker tile, bridge tile and opening are in one straight line.
+void MazeExplorer::tryResolveOpening() {
+    if (openingKnown || !markerAKnown || !bridgeTileKnown) return;
+    for (uint8_t k = 0; k < 4; k++) {
+        Direction d = (Direction)k;
+        if (bridgeTile.equals(markerA.x + SectionMap::stepX(d), markerA.y + SectionMap::stepY(d)) &&
+            !map.hasWall(markerA.x, markerA.y, d)) {
+            setOpening(bridgeTile.x, bridgeTile.y, d);
+            return;
+        }
+    }
+}
+
+// Called when Section A is fully explored and the opening is still unknown.
+bool MazeExplorer::identifyBridge() {
+    if (openingKnown) return true;
+
+    // 1. An open side of a visited cell that leads outside every possible
+    //    placement of the 4x4 section: that gap is the bridge opening.
+    int8_t cx = -1, cy = -1; Direction cd = DIR_NORTH; uint8_t count = 0;
+    for (int8_t y = 0; y < map.workSize(); y++) {
+        for (int8_t x = 0; x < map.workSize(); x++) {
+            if (!map.isVisited(x, y)) continue;
+            for (uint8_t k = 0; k < 4; k++) {
+                Direction d = (Direction)k;
+                if (map.hasWall(x, y, d)) continue;
+                if (map.canBeInside(x + SectionMap::stepX(d), y + SectionMap::stepY(d))) continue;
+                cx = x; cy = y; cd = d; count++;
+            }
+        }
+    }
+    if (count == 1) { setOpening(cx, cy, cd); return true; }
+
+    // 2. Bridge tile seen (white) but not the marker: its open side that may lead outside
+    if (bridgeTileKnown) {
+        count = 0;
+        for (uint8_t k = 0; k < 4; k++) {
+            Direction d = (Direction)k;
+            if (map.hasWall(bridgeTile.x, bridgeTile.y, d)) continue;
+            if (map.surelyInside(bridgeTile.x + SectionMap::stepX(d), bridgeTile.y + SectionMap::stepY(d))) continue;
+            cd = d; count++;
+        }
+        if (count == 1) { setOpening(bridgeTile.x, bridgeTile.y, cd); return true; }
+    }
+
+    // 3. Marker seen but not the bridge tile: the visited neighbour in line with a possible opening
+    if (markerAKnown) {
+        count = 0;
+        for (uint8_t k = 0; k < 4; k++) {
+            Direction d = (Direction)k;
+            int8_t bx = markerA.x + SectionMap::stepX(d), by = markerA.y + SectionMap::stepY(d);
+            if (map.hasWall(markerA.x, markerA.y, d) || !map.inWork(bx, by) || !map.isVisited(bx, by)) continue;
+            if (map.hasWall(bx, by, d)) continue;
+            if (map.surelyInside(bx + SectionMap::stepX(d), by + SectionMap::stepY(d))) continue;
+            cx = bx; cy = by; cd = d; count++;
+        }
+        if (count == 1) { setOpening(cx, cy, cd); return true; }
+    }
+    return false;
+}
+
+// ============================================================================
+// Results
+// ============================================================================
+
+void MazeExplorer::normalizeSectionA() {
+    int8_t bx = 0, by = 0;
+    map.placement(bx, by);
+    for (int8_t y = 0; y < MAZE_A_SIZE; y++)
+        for (int8_t x = 0; x < MAZE_A_SIZE; x++)
+            finalResult.mazeA[y][x] = map.raw(bx + x, by + y);
+    finalResult.startA         = {(int8_t)(startCell.x - bx), (int8_t)(startCell.y - by)};
+    finalResult.bridgeEntryA   = {(int8_t)(bridgeTile.x - bx), (int8_t)(bridgeTile.y - by)};
+    finalResult.bridgeExitDirA = openingDir;
+}
+
+void MazeExplorer::normalizeSectionB() {
+    int8_t bx = 0, by = 0;
+    map.placement(bx, by);
+    for (int8_t y = 0; y < MAZE_B_SIZE; y++)
+        for (int8_t x = 0; x < MAZE_B_SIZE; x++)
+            finalResult.mazeB[y][x] = map.raw(bx + x, by + y);
+    finalResult.bridgeExitB = {(int8_t)(bridgeInB.x - bx), (int8_t)(bridgeInB.y - by)};
+    finalResult.goalFound   = goalFound;
+    if (goalFound) finalResult.goalB = {(int8_t)(goalCell.x - bx), (int8_t)(goalCell.y - by)};
+}
+
+// ============================================================================
+// States
+// ============================================================================
+
+bool MazeExplorer::stepExploreA() {
+    uint8_t d = firstStep(SEARCH_FRONTIER);
+    if (d == NO_DIR) {
+        // Section A fully explored. If the walls do not settle where the
+        // opening is, it is checked with distances on the bridge tile.
+        if (!identifyBridge() && !bridgeTileKnown) {
+            robot.stop();
+            state = STATE_FAILED;
+            return false;
+        }
+        state = STATE_APPROACH_BRIDGE;
+        return true;
+    }
+    if (moveToward((Direction)d)) arriveAtCell(true);
+    return true;
+}
+
+// On the bridge tile with two open sides that could each be the opening (one
+// leads to the marker tile, the other off the maze). Looking along Section A
+// the sensor must see a wall within (N-1) cells; through the opening there is
+// no maze wall, so that side reads further.
+bool MazeExplorer::probeOpening() {
+    const float insideMaxCM = (map.sectionSize() - 1) * MAZE_CELL_CM + MAZE_CELL_CM / 2.0f;
+    Direction best = DIR_NORTH, beyond = DIR_NORTH;
+    float bestCM = -1.0f;
+    uint8_t candidates = 0, beyondCount = 0;
+
+    for (uint8_t k = 0; k < 4; k++) {
+        Direction d = (Direction)((heading + k) & 3);
+        if (map.hasWall(posX, posY, d)) continue;
+        if (map.surelyInside(posX + SectionMap::stepX(d), posY + SectionMap::stepY(d))) continue;
+        turnToHeading(d);
+        float cm = robot.readWalls().frontCM;
+        candidates++;
+        if (cm > bestCM) { bestCM = cm; best = d; }
+        if (cm > insideMaxCM) { beyond = d; beyondCount++; }
+    }
+    if (candidates == 0) return false;
+    // Exactly one side reads past the section: that is the opening.
+    // Otherwise take the longer reading (better than giving up the run).
+    setOpening(posX, posY, beyondCount == 1 ? beyond : best);
+    return true;
+}
+
+bool MazeExplorer::stepApproachBridge() {
+    if (bridgeTile.equals(posX, posY)) {
+        if (!openingKnown && !probeOpening()) {
+            robot.stop();
+            state = STATE_FAILED;
+            return false;
+        }
+        normalizeSectionA();
+        turnToHeading(openingDir);   // on the line, facing the bridge
+        state = STATE_CROSSING_BRIDGE;
+        return true;
+    }
+    searchTarget = bridgeTile;
+    uint8_t d = firstStep(SEARCH_TARGET);
+    if (d == NO_DIR) {
+        robot.stop();
+        state = STATE_FAILED;
+        return false;
+    }
+    if (moveToward((Direction)d)) arriveAtCell(true);
+    return true;
+}
+
+bool MazeExplorer::stepCrossBridge() {
+    if (lineFollower != nullptr) {
+        lineFollower->begin();
+        while (!lineFollower->step()) {
+        }
+        lineFollower->stop();
+    }
+    state = STATE_ENTER_SECTION_B;
+    return true;
+}
+
+bool MazeExplorer::stepEnterSectionB() {
+    // The line follower leaves the robot on the bridge-in tile facing into B.
+    // That heading is NORTH of the Section B map.
+    map.reset(MAZE_B_SIZE);
+    posX = posY = map.origin();
+    heading = DIR_NORTH;
+    bridgeInB = {posX, posY};
+    map.setWall(posX, posY, DIR_SOUTH);          // the opening behind us
+    map.requireCorner(posX, posY);
+    map.requireOuterSide(posX, posY, DIR_SOUTH);
+    arriveAtCell(false);
+    state = STATE_EXPLORE_SECTION_B;
+    return true;
+}
+
+bool MazeExplorer::stepExploreB() {
+    SearchMode mode = SEARCH_FRONTIER;
+    bool searching = true;
+    if (goalFound) {
+        // Keep exploring only while the shortest route still crosses unknown cells
+        searching = markOptimisticPath();
+        mode = SEARCH_PATH_CELLS;
+    }
+    uint8_t d = searching ? firstStep(mode) : NO_DIR;
+    if (d == NO_DIR) {
+        normalizeSectionB();
+        finalResult.completed = goalFound;
+        robot.stop();
+        state = goalFound ? STATE_COMPLETED : STATE_FAILED;
+        return false;
+    }
+    if (moveToward((Direction)d)) arriveAtCell(false);
+    return true;
 }

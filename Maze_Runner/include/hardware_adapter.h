@@ -3,29 +3,26 @@
 
 #include <Arduino.h>
 #include "robot_hardware_interface.h"
-#include "MotorDriver.h"
 #include "IRArray.h"
-#include "Ultrasonic.h"
 #include "LineFollower.h"
-#include "config.h"
 
 /**
  * ============================================================================
  * Concrete Platform Adapter for Group 4 Micromouse Hardware
  * ----------------------------------------------------------------------------
  * Connects the abstract IRobotPlatform interface to Group 4's hardware:
- * - MotorDriver (RPWM/LPWM with optical encoders)
- * - IRArray (8-channel reflectance array on bottom)
- * - Ultrasonic sensor(s) (Front/Left/Right distance measurement)
+ * - Motion lib (encoder PID moves, gyro turns, wall centring)
+ * - 3 ultrasonic sensors (front / left / right) for wall detection
+ * - IRArray (8-channel reflectance array on the bottom) for floor tiles
  * ============================================================================
  */
+// Run-time switch for the adapter's log lines (starts as LOG_ADAPTER in config.h).
+extern bool adapterLog;
+
 class G4RobotPlatform : public IRobotPlatform {
 private:
-    MotorDriver& motorDriver;
-    IRArray&     irArray;
-    Ultrasonics& frontUltrasonic;
-
-    float wallThresholdCM;
+    IRArray& irArray;
+    bool     initialized;
 
     // Bridge marker detection state machine
     enum MarkerState {
@@ -37,9 +34,12 @@ private:
     MarkerState   markerState;
     unsigned long markerStateTime;
 
-public:
-    G4RobotPlatform(MotorDriver& motors, IRArray& ir, Ultrasonics& frontUltra, float wallThresh = 18.0f);
+    TileType classifyFloor();
 
+public:
+    explicit G4RobotPlatform(IRArray& ir);
+
+    // Safe to call more than once: later calls only refresh the gyro bias.
     virtual void begin() override;
     virtual WallSensors readWalls() override;
     virtual TileType readFloorTile() override;
@@ -52,8 +52,7 @@ public:
  * ============================================================================
  * Pluggable Line Follower Adapter
  * ----------------------------------------------------------------------------
- * Wraps Group 4's LineFollower or teammate's 220601P_linefollow implementation.
- * Can be swapped out at any time with an alternate line follower.
+ * Wraps Group 4's LineFollower for the bridge crossing.
  * ============================================================================
  */
 class G4LineFollowerAdapter : public ILineFollower {

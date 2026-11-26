@@ -27,12 +27,22 @@ const int DEFAULT_IR_THRESHOLDS[8] = {500, 500, 500, 500, 500, 500, 500, 500};
 const int WHITE_VALUES[8] = {288, 158, 195, 324, 382, 516, 492, 460};
 const int BLACK_VALUES[8] = {1023, 1020, 1021, 1021, 1017, 1023, 1018, 1021};
 
-// Default PID Parameters
-#define DEFAULT_BASE_PWM    100
-#define DEFAULT_MAX_PWM     120
-#define DEFAULT_KP          0.030f
+// Line follower PID (LineFollower lib). Speeds are duty % for setMotors().
+// Converted from the ir_02.cpp tuning (0-255 analogWrite scale) - RETUNE ON THE ROBOT.
+#define DEFAULT_BASE_PWM    15
+#define DEFAULT_MAX_PWM     30
+#define DEFAULT_KP          0.010f
 #define DEFAULT_KI          0.000f
-#define DEFAULT_KD          0.100f
+#define DEFAULT_KD          0.021f
+
+// --- Start trigger ---
+// Pin of a start button to GND (INPUT_PULLUP), or -1 if there is none.
+// Without a button, the run starts when a hand covers the front sensor and is taken away.
+#define PIN_START_BUTTON    -1
+
+// 1 = the hardware adapter prints one line per sensor read / move / turn
+// (WALLS, FLOOR, MOVE, TURN) so a whole run can be followed in the serial log.
+#define LOG_ADAPTER         1
 
 // Motor and encoder calibration (4x decoding)
 #define ENCODER_COUNTS_PER_REV   897

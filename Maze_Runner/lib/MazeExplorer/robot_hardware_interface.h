@@ -17,6 +17,11 @@ struct WallSensors {
     bool wallFront;
     bool wallLeft;
     bool wallRight;
+    // Measured distances (cm). Used only to tell the bridge opening (no maze
+    // wall behind it) from a maze passage when the walls alone cannot.
+    float frontCM;
+    float leftCM;
+    float rightCM;
 };
 
 /**

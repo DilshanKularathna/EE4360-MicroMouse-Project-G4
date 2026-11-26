@@ -1,41 +1,85 @@
 #include "hardware_adapter.h"
+#include "config.h"
+#include "MotorDriver.h"
+#include "Motion.h"
 
-G4RobotPlatform::G4RobotPlatform(MotorDriver& motors, IRArray& ir, Ultrasonics& frontUltra, float wallThresh)
-    : motorDriver(motors),
-      irArray(ir),
-      frontUltrasonic(frontUltra),
-      wallThresholdCM(wallThresh),
+// Ultrasonic.cpp declares these as extern (used by its readAllSensors()).
+float frontDist = 0.0f;
+float leftDist  = 0.0f;
+float rightDist = 0.0f;
+
+bool adapterLog = LOG_ADAPTER;
+
+// A forward move that covers less than this did not reach the next cell.
+static const float MIN_CELL_PROGRESS_CM = CELL_SIZE_CM / 2.0f;
+
+G4RobotPlatform::G4RobotPlatform(IRArray& ir)
+    : irArray(ir),
+      initialized(false),
       markerState(MARKER_IDLE),
       markerStateTime(0)
 {
 }
 
 void G4RobotPlatform::begin() {
-    motorDriver.begin();
-    irArray.begin();
-    irArray.enable();
-    frontUltrasonic.begin();
     markerState = MARKER_IDLE;
     markerStateTime = 0;
+    if (initialized) {
+        motionRecalibrateGyro();
+        return;
+    }
+    motionBegin();
+    irArray.begin();
+    irArray.enable();
+    initialized = true;
 }
 
 WallSensors G4RobotPlatform::readWalls() {
+    motionRecalibrateGyro();   // robot is standing still here: refresh the gyro bias
+
+    // One sensor at a time so they cannot hear each other's echoes.
+    // Negative readings mean the wall is very close, so they count as walls.
+    frontDist = motionReadDistance(PIN_ULTRA_FRONT_TRIG, PIN_ULTRA_FRONT_ECHO);
+    leftDist  = motionReadDistance(PIN_ULTRA_LEFT_TRIG, PIN_ULTRA_LEFT_ECHO);
+    rightDist = motionReadDistance(PIN_ULTRA_RIGHT_TRIG, PIN_ULTRA_RIGHT_ECHO);
+
     WallSensors ws;
-    ws.wallFront = false;
-    ws.wallLeft  = false;
-    ws.wallRight = false;
+    ws.wallFront = frontDist < FRONT_WALL_CM;
+    ws.wallLeft  = leftDist  < WALL_THRESHOLD;
+    ws.wallRight = rightDist < WALL_THRESHOLD;
+    ws.frontCM   = frontDist;
+    ws.leftCM    = leftDist;
+    ws.rightCM   = rightDist;
 
-    float frontDist = frontUltrasonic.getDistanceCM();
-    if (frontDist > 0.0f && frontDist < wallThresholdCM) {
-        ws.wallFront = true;
+    if (adapterLog) {
+        Serial.print(F("WALLS F="));  Serial.print(frontDist, 1);
+        Serial.print(F(" L="));       Serial.print(leftDist, 1);
+        Serial.print(F(" R="));       Serial.print(rightDist, 1);
+        Serial.print(F(" -> F"));     Serial.print(ws.wallFront);
+        Serial.print(F(" L"));        Serial.print(ws.wallLeft);
+        Serial.print(F(" R"));        Serial.println(ws.wallRight);
     }
-
-    // Note: If additional side ultrasonics or a servo-mounted scanner
-    // are added by the hardware team, query them here.
     return ws;
 }
 
+static const char* tileName(TileType t) {
+    switch (t) {
+        case TILE_WHITE:         return "white";
+        case TILE_BRIDGE_MARKER: return "marker";
+        default:                 return "black";
+    }
+}
+
 TileType G4RobotPlatform::readFloorTile() {
+    TileType t = classifyFloor();
+    if (adapterLog) {
+        Serial.print(F("FLOOR "));
+        Serial.println(tileName(t));
+    }
+    return t;
+}
+
+TileType G4RobotPlatform::classifyFloor() {
     int rawIR[8];
     irArray.readRaw(rawIR);
 
@@ -98,25 +142,38 @@ TileType G4RobotPlatform::readFloorTile() {
 }
 
 bool G4RobotPlatform::moveForwardOneCell() {
-    // 288 ticks = 25 cm (1 cell)
-    motorDriver.moveCells(1.0f);
-    return true;
+    unsigned long t0 = millis();
+    float driven = motionForwardCell();
+    motionAlignFront();   // no-op unless a wall is in front of the new cell
+    bool ok = driven >= MIN_CELL_PROGRESS_CM;
+    if (adapterLog) {
+        Serial.print(ok ? F("MOVE ok ") : F("MOVE SHORT "));
+        Serial.print(driven, 1);
+        Serial.print(F("cm "));
+        Serial.print(millis() - t0);
+        Serial.println(F("ms"));
+    }
+    return ok;
 }
 
 void G4RobotPlatform::turn(int relativeTurns) {
-    if (relativeTurns == 1) {
-        motorDriver.turnRight90();
-    } else if (relativeTurns == -1) {
-        // Turn left 90°: turn 180° then right 90° (or 3x right 90°)
-        motorDriver.turn180();
-        motorDriver.turnRight90();
-    } else if (relativeTurns == 2 || relativeTurns == -2) {
-        motorDriver.turn180();
+    if (relativeTurns == -2) relativeTurns = 2;
+    unsigned long t0 = millis();
+    motionTurnBy(90.0f * relativeTurns);
+    if (adapterLog) {
+        Serial.print(F("TURN "));
+        if (relativeTurns > 0) Serial.print('+');
+        Serial.print(relativeTurns);
+        Serial.print(F(" err "));
+        Serial.print(motionHeadingError(), 1);
+        Serial.print(F("deg "));
+        Serial.print(millis() - t0);
+        Serial.println(F("ms"));
     }
 }
 
 void G4RobotPlatform::stop() {
-    motorDriver.stop();
+    stopMotors();
 }
 
 // ============================================================================
@@ -169,5 +226,8 @@ bool G4LineFollowerAdapter::step() {
 }
 
 void G4LineFollowerAdapter::stop() {
-    // Stop motor output
+    lineFollower.stop();
+    // The corridor turned the robot; its heading now is Section B's NORTH.
+    // TODO (robot): square up on the bridge-in tile walls before this.
+    motionResetHeading();
 }

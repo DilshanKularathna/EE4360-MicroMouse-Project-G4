@@ -2,17 +2,19 @@
 #define LINE_FOLLOWER_H
 
 #include <Arduino.h>
-#include "MotorDriver.h"
 #include "IRArray.h"
 
+/**
+ * PID line follower for the bridge (black line on white background).
+ * Drives the motors through MotorDriver's setMotors(), in duty percent.
+ */
 class LineFollower {
 private:
-    MotorDriver& motors;
     IRArray& irSensors;
 
-    int basePwm;
-    int maxPwm;
-    
+    int basePwm;    // duty %
+    int maxPwm;     // duty %
+
     float kp, ki, kd;
     int lastError;
     float integral;
@@ -21,7 +23,7 @@ private:
     const int* blackVals;
 
 public:
-    LineFollower(MotorDriver& motorRef, IRArray& irRef);
+    explicit LineFollower(IRArray& irRef);
 
     void begin(const int* white, const int* black);
     void setPIDGains(float p, float i, float d);
@@ -29,6 +31,7 @@ public:
 
     int getNormalizedPosition();
     void update(); // Runs one iteration of PID calculation and motor control
+    void stop();
 };
 
 #endif // LINE_FOLLOWER_H
