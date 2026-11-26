@@ -70,7 +70,7 @@ Every subsystem developed by group members maps directly into a specific functio
 
 ## 3. Input Specifications (What the Algorithm Expects)
 
-The `MazeExplorer` algorithm queries inputs via the abstract [`IRobotPlatform`](../include/robot_hardware_interface.h) and [`ILineFollower`](../include/robot_hardware_interface.h) interfaces.
+The `MazeExplorer` algorithm queries inputs via the abstract [`IRobotPlatform`](../lib/MazeExplorer/robot_hardware_interface.h) and [`ILineFollower`](../lib/MazeExplorer/robot_hardware_interface.h) interfaces.
 
 ### Input 1: Wall Sensor Readings (`WallSensors`)
 * **Provided by:** `IRobotPlatform::readWalls()`

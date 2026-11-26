@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include "config.h"
+#include "MotorDriver.h"
+
+#define TEST_FREQ     20000
 
 void setup()
 {
@@ -8,16 +11,11 @@ void setup()
 
     pinMode(PIN_LEFT_RPWM, OUTPUT);
     pinMode(PIN_LEFT_LPWM, OUTPUT);
-
-    // Move both motors forward
-    analogWrite(PIN_RIGHT_RPWM, 0);
-    analogWrite(PIN_RIGHT_LPWM, DEFAULT_BASE_PWM);
-
-    analogWrite(PIN_LEFT_RPWM, 0);
-    analogWrite(PIN_LEFT_LPWM, DEFAULT_BASE_PWM);
 }
 
 void loop()
 {
-    // Motors keep running forward
+    // Motors keep
+    moveDistanceCM(50.0f, 30);
+    delay(2000);
 }

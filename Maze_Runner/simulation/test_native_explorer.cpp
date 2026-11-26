@@ -15,7 +15,7 @@
 #include <vector>
 #include <cstdlib>
 #include <cassert>
-#include "../include/maze_explorer.h"
+#include "../lib/MazeExplorer/maze_explorer.h"
 
 // Simple deterministic maze generator for testing
 void generateTestMaze(uint8_t maze[MAZE_B_SIZE][MAZE_B_SIZE], int width, int height) {
