@@ -18,6 +18,8 @@ black floor -> WHITE strip ~3.5 cm -> BLACK square ~12 cm (12 cm wide) -> WHITE 
             -> small black part -> black line starts (switch to line mode here)
 ```
 
+From the user's photo (2026-11-27): the cell is a **white square frame on all 4 sides** (~3.5 cm wide) around a 12 cm black square, in a 1-cell corridor with wooden walls left and right. A strip of black tape (~2 cm wide, glossy at one end) runs down the middle of the black square, along the direction of travel; it reads blacker (~1000) than the card (~950). Because the frame is on all sides, the robot also sees the white-black-white pattern when it comes from the line side.
+
 Still unknown: the exact size of the small black part, what the line's background is (assumed white), where the line section ends, and whether the cell can be entered from another side.
 
 ## Current state
@@ -28,7 +30,7 @@ Still unknown: the exact size of the small black part, what the line's backgroun
 | IR calibration | **Done** | New values measured with ir_02 `c` and copied into `config.h` |
 | Line follow in `ir_02.cpp` | **Done, works** | The user confirmed it follows well with BASE_PWM 95 |
 | `LineFollower` library | **Written, builds** | **Not tested on the robot** |
-| Special-cell detector | **Written, builds** | **Not tested on the robot.** Based on the band pattern above |
+| Special-cell detector | **Hand test (`v`) passed 3/3** (2026-11-27) | white1 3.5 / 3.4 / 3.5 cm; black 11.0 / 9.6 / 10.8 cm (nominal 12, reads short by hand); FOUND each time on white2; small black ~2.4-3.2 cm; line starts ~5 cm after FOUND on a white background (~750-880). Run 3: a **3.1 cm all-black patch ON the line section** (~4 cm after the line starts, raw 900-990). Black floor raw 930-970 vs thresholds 869-913 |
 | Maze solver hook | **Written, builds, OFF** | `LINE_MODE 0` in `maze_solver_small.cpp` |
 | Re-align after line mode | Not started | TODO in `navigateStep()` |
 
@@ -47,14 +49,16 @@ Still unknown: the exact size of the small black part, what the line's backgroun
 | `LINE_IS_WHITE` | 0 | 1 = white line on black |
 | `MARKER_FULL_SENSORS` | 6 | Sensors that must agree for a full-width band |
 | `MARKER_W_MIN_CM` / `_MAX_CM` | 2.0 / 6.0 | White strip (nominal 3.5) |
-| `MARKER_B_MIN_CM` / `_MAX_CM` | 8.0 / 16.0 | Black square (nominal 12) |
+| `MARKER_B_MIN_CM` / `_MAX_CM` | 8.5 / 16.0 | Black square (nominal 12). Motor runs read 11.5-11.6; one run saw a false 5.3 cm black band. 8.5 sits between the two |
 | `MARKER_W2_CONFIRM_CM` | 1.5 | Second strip seen this long = FOUND |
 | `MARKER_FINISH_MAX_CM` | 30 | Driving limit to finish a pattern cut off by the end of a move |
 | `LINE_SEARCH_DUTY` | 20 % | Straight drive while looking for the line |
 | `LINE_SEARCH_MAX_CM` | 60 | |
 | `LINE_FOUND_CM` | 1.0 | 1-4 sensors black for this long = line found |
-| `LINE_END_SENSORS` / `LINE_END_CM` | 6 / 3.0 | Back on the black floor = end of the line section |
-| `LINE_LOST_MS` | 400 | |
+| `LINE_END_SENSORS` / `LINE_END_CM` | 6 / 6.0 | Back on the black floor = end of the line section. Raised from 3 because of the 3.1 cm patch on the line section |
+| `LINE_END_MAX_CONTRAST` | 60 | End also needs max-min raw < 60 (black floor 20-50; grey line background + line 70-130) |
+| `LINE_MIN_FOLLOW_CM` | 20 | No 'line ended' check for the first 20 cm of following (ramp at the start of the line section) |
+| `LINE_LOST_MS` | 2000 | Raised from 400 by the user |
 
 ## Active fixes / things to watch
 
@@ -115,6 +119,29 @@ Builds checked: `irarray_test`, `line_mode_test`, `maze_solve_test` (with `LINE_
 | First marker detector: "5 or more white sensors for 1.5 cm = white square" | Based on a wrong description of the cell. Replaced by the white–black–white band detector. |
 | Old calibration in ir_02 (white ~730-800, black ~975) and in `config.h` (white 158-516) | Outdated. Replaced by the new `c` values. |
 | Running `pio` directly in PowerShell | Not on the PATH. Use `& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"`. |
+
+## Session 2 (2026-11-27)
+
+- 3 hand runs of `v`: the pattern was found every time (see Current state).
+- Changed `MARKER_B_MIN_CM` 8 → 7 and `LINE_END_CM` 3 → 6.
+- Fixed a log bug: the first `marker: floor` line after `v` was restarted printed a negative length (`-18.4 cm`), because `markerReset()` didn't reset the band start. It now does (`mFresh`). Detection was not affected.
+- Open question: what is the all-black patch about 4 cm after the line starts (a cross line, a joint, a darker piece of board)? If it can be longer than 6 cm, line mode would end early there.
+- Not done yet: the false-trigger check (`v` along a normal corridor and over the line section).
+
+- `m` (motors) 3 runs: runs 2 and 3 perfect (white1 3.5/3.6, black 11.6/11.5, FOUND at 27.4/27.5 cm). Run 1 first saw a different sequence: white 3.5, **black 5.3** (rejected as too short), white 4.1, black 16 (rejected as floor). It then found the real pattern (white 3.5, black 11.6) at 56.6 cm. **Unknown what that first sequence was**: ask where the robot started and what is on the floor there.
+- Changed `MARKER_B_MIN_CM` 7 → 8.5, halfway between the false 5.3 and the real 11.5.
+
+- Added `@<cm> <bar>` to every `marker:` line, so an unexpected sequence (like `m` run 1) can be traced to a spot on the floor.
+
+- Motor tests: `m` 3/3 (white1 3.5-3.6, black 11.4-11.5, FOUND 26.3-27.8 cm). `f` 3/3 marker found. `l`/`f`: the line was found 6.4-6.7 cm after FOUND each time.
+- **Problem:** in all 6 `l`/`f` runs line mode ended `line ended (black floor)` only **8.4-10.1 cm** after the line was found, with black=8 from about 4 cm in. The hand logs show the line section's background reading grey (870-940, which is 'black' by the midpoint) while the line itself reads 980-1000. So this is most likely a false end, not the real end of the line. **Ask the user where the robot physically stopped.**
+- Fix: the end also needs `lineContrast()` (max-min raw) < `LINE_END_MAX_CONTRAST` 60. On real black floor the readings are even (20-50); on grey background with the line, 70-130. The follow log now prints every 50 ms with `c=` and the bar, and `v` shows `c=`.
+- The user had not uploaded the build with the `@cm bar` marker logging when running these tests.
+
+- The user found a **small ramp at the start of the line section**. On it the IR array lifts off the surface, so every sensor reads dark and even, which looks exactly like the black floor and ended line mode early. Added `LINE_MIN_FOLLOW_CM` 20: no end check until 20 cm of following. The lost check stays active. To do: measure the ramp length and set this to (line start → top of ramp) + about 5 cm.
+
+- `l`/`f` with `LINE_MIN_FOLLOW_CM` 20 (4 runs): marker found (white 3.5-3.6, black 11.5), line found 6.3 cm after FOUND, ramp crossed (`######## c=6-47` from ~3.5 to 13.6 cm, no false end), line followed on top from ~15 to 29 cm. **The test track ends at the top of the ramp** (the rest of the line section isn't connected yet), so everything after ~30 cm in those logs (line lost, spinning, up to 100 cm on plain white, end on black floor) is the unfinished track, not a bug.
+- Known weakness for when the full track is built: on a plain white surface with no line, `lost` (normalised sum < `LINE_LOST_SUM` 200) didn't fire, because that white reads slightly greyer than the calibration white, and `LINE_LOST_MS` 2000 = 8-14 cm of spinning at this speed. Check both on the full track.
 
 ## Next steps
 

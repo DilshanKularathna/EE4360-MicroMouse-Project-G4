@@ -15,6 +15,12 @@
 #define PIN_LEFT_ENC_A      18
 #define PIN_LEFT_ENC_B      19
 
+// --- 4-way DIP switch (mode select) ---
+// Wiring: resistor from each pin to GND, other side of the switch to 5V -> ON reads HIGH.
+// Never configure these pins as outputs.
+const uint8_t DIP_PINS[4] = {49, 47, 45, 43};   // [0] = SW1 ... [3] = SW4
+#define DIP_ON_LEVEL         HIGH
+
 // --- IR Sensor Array Pins ---
 #define PIN_IR_EN            52
 const uint8_t IR_PINS[8] = {A7, A6, A5, A4, A3, A2, A1, A0};   // [0] = robot's right most, [7] = left most
@@ -26,7 +32,7 @@ const int BLACK_VALUES[8] = {1022, 1017, 1020, 1019, 1017, 1016, 1018, 1017};
 
 // Line follower (tuned in ir_02.cpp). Speeds are on the 0-255 analogWrite scale used
 // there; the LineFollower library converts them to duty % for setMotors().
-#define LINE_BASE_PWM        95
+#define LINE_BASE_PWM        50
 #define LINE_MAX_PWM         100
 #define LINE_KP              0.025f
 #define LINE_KI              0.000f
@@ -41,7 +47,7 @@ const int BLACK_VALUES[8] = {1022, 1017, 1020, 1019, 1017, 1016, 1018, 1017};
 #define MARKER_FULL_SENSORS  6       // this many sensors the same colour = a full-width band
 #define MARKER_W_MIN_CM      2.0f    // white strip length limits (nominal 3.5 cm)
 #define MARKER_W_MAX_CM      6.0f
-#define MARKER_B_MIN_CM      8.0f    // black square length limits (nominal 12 cm)
+#define MARKER_B_MIN_CM      8.5f    // black square limits (nominal 12; motors 11.5-11.6, hand 9.6-11.0; a false 5.3 was seen)
 #define MARKER_B_MAX_CM      16.0f
 #define MARKER_W2_CONFIRM_CM 1.5f    // second white strip seen this long = marker found
 #define MARKER_FINISH_MAX_CM 30.0f   // a move ended mid-pattern: drive at most this far to finish it
@@ -49,8 +55,10 @@ const int BLACK_VALUES[8] = {1022, 1017, 1020, 1019, 1017, 1016, 1018, 1017};
 #define LINE_SEARCH_MAX_CM   60.0f   // give up if no line is found within this distance
 #define LINE_FOUND_CM        1.0f    // line pattern must last this long to count as found
 #define LINE_END_SENSORS     6       // this many sensors black = back on the black maze floor
-#define LINE_END_CM          3.0f    // ...for at least this distance = end of the line section
-#define LINE_LOST_MS         400     // line lost (all white) this long = stop line mode
+#define LINE_END_MAX_CONTRAST 60     // ...and max-min raw below this (floor 20-50; grey background + line 70-130)
+#define LINE_END_CM          6.0f    // ...for at least this distance = end of the line section
+#define LINE_MIN_FOLLOW_CM   30.0f   // no 'line ended' check until this far along the line (ramp at the start lifts the IR array)
+#define LINE_LOST_MS         500     // line lost (all white) this long = stop line mode
 
 // Motor and encoder calibration (4x decoding)
 #define ENCODER_COUNTS_PER_REV   897
@@ -79,7 +87,7 @@ static const float CM_PER_COUNT = (3.14159f * WHEEL_DIAMETER_CM / ENCODER_COUNTS
 #define WALL_THRESHOLD 9.0f      // side wall present if below this (walls read 0-8; 10-15 = posts/far walls)
 #define FRONT_WALL_CM 15.0f      // front wall in this cell if F is below this (centred: 4.3, next cell: ~29)
 #define FRONT_OBSTACLE FRONT_WALL_CM
-#define WALL_CENTER_CM 3.2f      // side reading when centred in a cell (measured)
+#define WALL_CENTER_CM 3.0f      // side reading when centred in a cell (measured)
 #define FRONT_CENTER_CM 2.3f     // front reading with the AXLE on the cell centre (measured)
 #define FRONT_MARGIN_CM 1.0f     // extra gap kept from a front wall (0 = axle exactly on the centre)
 #define FRONT_TARGET_CM (FRONT_CENTER_CM + FRONT_MARGIN_CM)
@@ -96,7 +104,7 @@ static const float CM_PER_COUNT = (3.14159f * WHEEL_DIAMETER_CM / ENCODER_COUNTS
 #define HEADING_KP 2.0f          // duty % per degree of heading error (gyro, autotuned)
 #define HEADING_KD 0.0f          // duty % per deg/s of turn rate (gyro): damps wobble, 0 = off
 #define ENC_SYNC_KP 0.1f         // tuning stage 2: duty % per tick of left-right difference
-#define WALL_YAW_GAIN 1.5f       // degrees of heading offset per cm of wall error (autotuned)
+#define WALL_YAW_GAIN 1.0f       // degrees of heading offset per cm of wall error (autotuned)
 #define MAX_WALL_YAW 10.0f       // limit on that offset (degrees, autotuned)
 
 // --- Ultrasonic Sensor Pins ---

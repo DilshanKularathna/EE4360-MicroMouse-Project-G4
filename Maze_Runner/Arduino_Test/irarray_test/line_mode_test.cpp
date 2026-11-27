@@ -54,6 +54,7 @@ static void viewMode() {
             Serial.print("| ");
             printBar();
             Serial.print(" black="); Serial.print(lineBlackCount());
+            Serial.print(" c=");     Serial.print(lineContrast());
             Serial.print(" cm=");    Serial.print(cm, 1);
             Serial.print(" step=");  Serial.println(markerStepName());
         }

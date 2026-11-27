@@ -12,6 +12,7 @@ static int rawSensors[NUM_SENSORS];
 static int normalizedSensors[NUM_SENSORS];
 static bool blackFlags[NUM_SENSORS];
 static uint8_t blackCount = 0;
+static int rawMin = 0, rawMax = 0;   // spread of the 8 raw readings (contrast)
 
 static int   lastLineError = 0;
 static float lineIntegral  = 0;
@@ -35,11 +36,15 @@ void lineBegin() {
 
 void lineReadSensors() {
     blackCount = 0;
+    rawMin = 1023;
+    rawMax = 0;
     for (int i = 0; i < NUM_SENSORS; i++) {
         rawSensors[i] = analogRead(IR_PINS[i]);
 
         blackFlags[i] = rawSensors[i] > (whiteValues[i] + blackValues[i]) / 2;
         if (blackFlags[i]) blackCount++;
+        if (rawSensors[i] < rawMin) rawMin = rawSensors[i];
+        if (rawSensors[i] > rawMax) rawMax = rawSensors[i];
 
         int clamped = constrain(rawSensors[i], whiteValues[i], blackValues[i]);
         float ratio = (float)(clamped - whiteValues[i]) / (float)(blackValues[i] - whiteValues[i]);
@@ -54,6 +59,7 @@ int     lineNorm(uint8_t i)    { return normalizedSensors[i]; }
 bool    lineIsBlack(uint8_t i) { return blackFlags[i]; }
 uint8_t lineBlackCount()       { return blackCount; }
 uint8_t lineWhiteCount()       { return NUM_SENSORS - blackCount; }
+int     lineContrast()         { return rawMax - rawMin; }
 
 // ================================================================
 // PID FOLLOWER (ir_02 followLinePID)
@@ -159,8 +165,9 @@ bool markerVerbose = true;
 static MarkerStep mStep    = M_FLOOR;
 static float      mStartCm = 0.0f;   // where the current band started
 static float      mLastCm  = 0.0f;   // last distance passed to markerUpdate
+static bool       mFresh   = true;   // after a reset: the next update starts the floor band
 
-void markerReset() { mStep = M_FLOOR; }
+void markerReset() { mStep = M_FLOOR; mFresh = true; }
 
 const char *markerStepName() { return STEP_NAMES[mStep]; }
 
@@ -179,6 +186,10 @@ static void markerGo(MarkerStep next, float cm, const char *why) {
         Serial.print(" cm -> ");
         Serial.print(STEP_NAMES[next]);
         if (why) { Serial.print(" ("); Serial.print(why); Serial.print(')'); }
+        Serial.print("  @");                       // where it happened + what the array saw
+        Serial.print(cm, 1);
+        Serial.print(" cm ");
+        for (int i = 0; i < NUM_SENSORS; i++) Serial.print(blackFlags[i] ? '#' : '.');
         Serial.println();
     }
     mStep    = next;
@@ -189,6 +200,7 @@ static void markerGo(MarkerStep next, float cm, const char *why) {
 // robot at an angle) keep the current step.
 MarkerState markerUpdate(float cm) {
     mLastCm = cm;
+    if (mFresh) { mStartCm = cm; mFresh = false; }
     lineReadSensors();
     bool  white = lineWhiteCount() >= MARKER_FULL_SENSORS;
     bool  black = lineBlackCount() >= MARKER_FULL_SENSORS;
@@ -307,7 +319,13 @@ LineModeResult runLineMode(bool finishMarker, bool (*abortCheck)()) {
         LineStep s = lineFollowStep(true);
         float cm = lineOdoCm();
 
-        if (lineBlackCount() >= LINE_END_SENSORS) {   // maze floor is black either way
+        // Black floor = (almost) all sensors black AND even readings. The line section's
+        // background can read grey (870-940, 'black' by the midpoint) but the line on it
+        // still stands out (~980-1000), so the contrast stays high there.
+        // Ignored for the first LINE_MIN_FOLLOW_CM: on the ramp at the start of the line section
+        // the IR array is lifted off the surface and every sensor reads dark and even.
+        if (cm >= LINE_MIN_FOLLOW_CM &&
+            lineBlackCount() >= LINE_END_SENSORS && lineContrast() < LINE_END_MAX_CONTRAST) {
             if (endStart < 0) endStart = cm;
             if (cm - endStart >= LINE_END_CM) { result = LINE_DONE_END; break; }
         } else {
@@ -321,13 +339,17 @@ LineModeResult runLineMode(bool finishMarker, bool (*abortCheck)()) {
             lostSince = 0;
         }
 
-        if (millis() - lastPrint > 200) {
+        if (millis() - lastPrint >= 50) {
             lastPrint = millis();
             Serial.print("line cm="); Serial.print(cm, 1);
             Serial.print(" pos=");    Serial.print(s.position);
             Serial.print(" L=");      Serial.print(s.leftPwm);
             Serial.print(" R=");      Serial.print(s.rightPwm);
-            Serial.print(" black=");  Serial.println(lineBlackCount());
+            Serial.print(" black=");  Serial.print(lineBlackCount());
+            Serial.print(" c=");      Serial.print(lineContrast());
+            Serial.print(' ');
+            for (int i = 0; i < NUM_SENSORS; i++) Serial.print(blackFlags[i] ? '#' : '.');
+            Serial.println();
         }
         delay(5);
     }

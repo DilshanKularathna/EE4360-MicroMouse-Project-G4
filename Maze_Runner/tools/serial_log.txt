@@ -2452,3 +2452,10 @@ Centre the robot in cell 1, then cover the front sensor with your hand and take 
 Hand seen - take it away.
 Starting in 3 s. Keep clear and do not touch the robot.
 start L=100.0 F=100.0 R=100.0
+===== Session 2026-11-27 08:59:14 =====
+
+=== Line mode test ===
+Commands: v=view  g=follow  m=marker run  l=line mode  f=full (marker + line)
+
+=== Line mode test ===
+Commands: v=view  g=follow  m=marker run  l=line mode  f=full (marker + line)

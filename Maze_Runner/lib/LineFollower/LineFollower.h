@@ -40,6 +40,7 @@ int     lineNorm(uint8_t i);                           // 0 = background, 1000 =
 bool    lineIsBlack(uint8_t i);                        // raw above the white/black midpoint
 uint8_t lineBlackCount();
 uint8_t lineWhiteCount();
+int     lineContrast();                                // max - min raw of the 8 sensors
 
 // ---- PID follower (same maths as ir_02 followLinePID) ----
 void     lineReset();                                  // clear PID memory before following
